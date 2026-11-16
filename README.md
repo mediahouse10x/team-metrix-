@@ -4,7 +4,7 @@ A single-page tool for tracking monthly performance of a content team, with a **
 
 | File | What it is |
 |---|---|
-| `Team Individual Metrics.html` | The whole app — open it in any browser, no build step, no server |
+| `index.html` | The whole app — open it in any browser, no build step, no server |
 | `Code.gs` | Google Apps Script to paste into the sheet (this is the backend) |
 | `Google Sheet setup.md` | Step-by-step setup, in Tamil |
 
@@ -25,7 +25,9 @@ Overall % is a weighted average of each job's `actual / goal`, with **Critical j
 1. Make a Google Sheet.
 2. **Extensions → Apps Script**, paste `Code.gs`, save.
 3. **Deploy → New deployment → Web app**, execute as **Me**, access **Anyone**. Copy the `/exec` URL.
-4. Open the HTML page → **Jobs & Settings → Google Sheet database** → paste the URL → **Save & connect**.
+4. Open the page → **Jobs & Settings → Google Sheet database** → paste the URL → **Save & connect**.
+
+Live: **https://mediahouse10x.github.io/team-metrix-/**
 
 Full instructions, including what each sheet tab holds: [`Google Sheet setup.md`](Google%20Sheet%20setup.md).
 

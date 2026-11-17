@@ -19,7 +19,9 @@ HTML page-ஓட database இப்போ ஒரு Google Sheet. Page browser-�
 
 ## ஷீட்ல என்ன இருக்கும்
 
-Script-ஏ நாலு tab உருவாக்கிக்கும்:
+Script-ஏ tab-களை உருவாக்கிக்கும்.
+
+**Team Metrics பகுதி:**
 
 | Tab | Columns |
 |---|---|
@@ -27,6 +29,14 @@ Script-ஏ நாலு tab உருவாக்கிக்கும்:
 | `Team` | id, name, level, jobs (job id-கள் comma-ல) |
 | `Settings` | key, value (EPI/MPI/LPI, weights, cap) |
 | `Entries` | month, personId, jobId, goal, actual |
+
+**Deliverables பகுதி** (மேல இருக்கற tab-களோட எந்த சம்மந்தமும் இல்ல):
+
+| Tab | Columns |
+|---|---|
+| `Brands` | id, name |
+| `BrandItems` | brandId, itemId, name |
+| `Plan` | month, brandId, itemId, quantity |
 
 ஷீட்ல data-வ படிக்கலாம், pivot/chart போடலாம். ஆனா **கையால edit பண்ணாதீங்க** — page-ல இருந்து save ஆகும்போது அந்த tab மறுபடியும் எழுதப்படும். கையால மாத்தினா, page-ல **Reload from sheet** அழுத்தினா அது page-க்கு வரும்.
 

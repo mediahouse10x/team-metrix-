@@ -1,6 +1,11 @@
 # Team Metrix
 
-A single-page tool for tracking monthly performance of a content team, with a **Google Sheet as the database**.
+A single-page tool with two independent sections, both backed by a **Google Sheet as the database**:
+
+- **Team Metrics** — monthly goal vs actual per person, per job.
+- **Deliverables** — what each brand gets this month, per deliverable type.
+
+The two share nothing but the sheet they live in.
 
 | File | What it is |
 |---|---|
@@ -8,13 +13,20 @@ A single-page tool for tracking monthly performance of a content team, with a **
 | `Code.gs` | Google Apps Script to paste into the sheet (this is the backend) |
 | `Google Sheet setup.md` | Step-by-step setup, in Tamil |
 
-## What it does
+## Team Metrics
 
 - **Dashboard** — team average, EPI / MPI / LPI / Below-LPI counts, leaderboard, per-person breakdown, 6-month trend chart.
 - **Monthly Entry** — goal vs actual for every job a person does; achievement and status update as you type.
 - **Team & Roles** — add people, set Junior/Senior, tick the jobs each person does.
 - **Jobs & Settings** — the job library, the rating thresholds and weights, and the Google Sheet connection.
 - **Export** — CSV (Details / Summary / 6-month trend) or a 3-sheet Excel file, for the selected month.
+
+## Deliverables
+
+- **Plan** — create brands, add each brand's deliverables (Ads, Story, Carousel, Reels, anything), and set how many of each go out this month. "Copy from last month" fills a repeating retainer in one click.
+- **Overview** — total deliverables for the month, a ranked table by brand with each brand's share, totals by deliverable type across all brands, a per-brand breakdown and a bar chart. Exports to CSV.
+
+Quantities are per month, so each month stands on its own and past months stay readable.
 
 ## Scoring
 

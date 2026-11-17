@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Team Individual Metrics</title>
+<title>Team Metrix</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -87,6 +87,14 @@ td.r,th.r{text-align:right}
 .conn.ok{background:var(--epi-bg);color:var(--epi);border-color:transparent}
 .conn.sync{background:var(--mpi-bg);color:var(--mpi);border-color:transparent}
 .conn.err{background:var(--low-bg);color:var(--low);border-color:transparent}
+.seg{display:flex;gap:2px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:2px}
+.seg button{border:none;background:transparent;color:var(--muted);padding:6px 12px;border-radius:8px;font-size:13px;font-weight:700}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--accent)}
+.share{height:8px;border-radius:99px;background:var(--bg);overflow:hidden;min-width:70px}
+.share span{display:block;height:100%;border-radius:99px;background:var(--accent)}
+.delrow{display:grid;grid-template-columns:1fr 110px auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.delrow:last-of-type{border-bottom:none}
+.tag{display:inline-block;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--bg);padding:1px 5px;border-radius:5px}
 canvas{max-width:100%}
 .chartbox{position:relative;height:260px}
@@ -98,13 +106,12 @@ input.cell{width:90px;text-align:right}
 <body>
 <header>
   <div class="bar">
-    <div class="brand">Team Metrics</div>
-    <nav id="nav">
-      <a href="#dashboard" data-v="dashboard">Dashboard</a>
-      <a href="#entry" data-v="entry">Monthly Entry</a>
-      <a href="#team" data-v="team">Team &amp; Roles</a>
-      <a href="#jobs" data-v="jobs">Jobs &amp; Settings</a>
-    </nav>
+    <div class="brand">Team Metrix</div>
+    <div class="seg" id="seg" role="group" aria-label="Section">
+      <button data-sec="metrics">Team Metrics</button>
+      <button data-sec="deliv">Deliverables</button>
+    </div>
+    <nav id="nav"></nav>
     <div class="spacer"></div>
     <span class="conn" id="connBadge">Local only</span>
     <label class="monthpick" for="month">Month <input type="month" id="month"></label>
@@ -134,16 +141,29 @@ function defaultConfig(){
   return {
     lib,
     team:[{id:"p1",name:"Varadharaj",level:"Senior",jobs:lib.filter(x=>x.level==="Senior"&&(["Script prep","Video edit"].includes(x.job)||(x.job==="Ads"&&x.category===A))).map(x=>x.id)}],
-    settings:{epi:100,mpi:85,lpi:70,wc:2,wk:1,cap:120}
+    settings:{epi:100,mpi:85,lpi:70,wc:2,wk:1,cap:120},
+    brands:[]                                    // deliverables side: [{id,name,items:[{id,name}]}]
   };
 }
 
 // ---------- State ----------
 let config=defaultConfig(), configSaved=false;
-const months={};           // "2026-11" -> {e:{pid:{jid:{g,a}}}}
+const months={};           // metrics:      "2026-11" -> {e:{pid:{jid:{g,a}}}}
+const bmonths={};          // deliverables: "2026-11" -> {q:{brandId:{itemId:qty}}}
 const sheet={url:"",state:"off",msg:""};   // Google Sheet backend (Apps Script web app)
-const ui={view:"dashboard",month:currentMonth(),entryPerson:null,dashPerson:null,drafts:{}, confirmDel:null};
+const ui={view:"dashboard",month:currentMonth(),entryPerson:null,dashPerson:null,drafts:{},confirmDel:null,
+          brandSel:null,brandDash:null,bdrafts:{}};
 const charts={};
+// Two independent sections. Nothing on the deliverables side touches the metrics data.
+const VIEWS={
+  dashboard:{sec:"metrics",label:"Dashboard"},
+  entry:    {sec:"metrics",label:"Monthly Entry"},
+  team:     {sec:"metrics",label:"Team &amp; Roles"},
+  jobs:     {sec:"metrics",label:"Jobs &amp; Settings"},
+  plan:     {sec:"deliv",  label:"Plan"},
+  brands:   {sec:"deliv",  label:"Overview"}
+};
+const secOf=v=>(VIEWS[v]||VIEWS.dashboard).sec;
 
 function currentMonth(){const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");}
 function monthLabel(m){const [y,mm]=m.split("-");return new Date(+y,+mm-1,1).toLocaleString("en-IN",{month:"short",year:"numeric"});}
@@ -192,19 +212,21 @@ function plain(o){return JSON.parse(JSON.stringify(o));}
 const LS_DATA="tm-data", LS_URL="tm-sheet-url";
 function lsGet(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
-function cacheSave(){lsSet(LS_DATA,JSON.stringify({config,months}));}
+function cacheSave(){lsSet(LS_DATA,JSON.stringify({config,months,bmonths}));}
 function cacheLoad(){
   sheet.url=lsGet(LS_URL)||"";
   try{const d=JSON.parse(lsGet(LS_DATA)||"null");
     if(d&&d.config){config=normalizeConfig(d.config);configSaved=true;}
     if(d&&d.months)Object.assign(months,d.months);
+    if(d&&d.bmonths)Object.assign(bmonths,d.bmonths);
   }catch(e){}
 }
 function normalizeConfig(c){
   const d=defaultConfig();
   return {lib:(c&&c.lib&&c.lib.length)?c.lib:d.lib,
           team:(c&&Array.isArray(c.team))?c.team.map(p=>({id:p.id,name:p.name,level:p.level==="Senior"?"Senior":"Junior",jobs:p.jobs||[]})):[],
-          settings:Object.assign({},d.settings,(c&&c.settings)||{})};
+          settings:Object.assign({},d.settings,(c&&c.settings)||{}),
+          brands:(c&&Array.isArray(c.brands))?c.brands.map(b=>({id:b.id,name:b.name,items:(b.items||[]).map(i=>({id:i.id,name:i.name}))})):[]};
 }
 function setConn(state,msg){sheet.state=state;sheet.msg=msg||"";updateBadge();}
 function updateBadge(){
@@ -239,7 +261,9 @@ async function pullSheet(){
     else{await sheetCall("saveConfig",{config:plain(config)});}   // empty sheet: seed it with what we have
     for(const k of Object.keys(months))delete months[k];
     Object.assign(months,j.months||{});
-    ui.drafts={};
+    for(const k of Object.keys(bmonths))delete bmonths[k];
+    Object.assign(bmonths,j.bmonths||{});
+    ui.drafts={}; ui.bdrafts={};
     setConn("ok");cacheSave();render();return true;
   }catch(err){setConn("err",err.message);render();return false;}
 }
@@ -257,17 +281,28 @@ async function saveMonth(m){
   try{await queued("m_"+m,()=>sheetCall("saveMonth",{month:m,entries:plain((months[m]&&months[m].e)||{})}));setConn("ok");return true;}
   catch(err){setConn("err",err.message);toast("Couldn't save to the sheet — kept in this browser.");return false;}
 }
+async function saveBrandMonth(m){
+  cacheSave();
+  if(!sheet.url)return true;
+  setConn("sync");
+  try{await queued("p_"+m,()=>sheetCall("savePlan",{month:m,plan:plain((bmonths[m]&&bmonths[m].q)||{})}));setConn("ok");return true;}
+  catch(err){setConn("err",err.message);toast("Couldn't save to the sheet — kept in this browser.");return false;}
+}
 
 // ---------- Rendering ----------
 const view=()=>document.getElementById("view");
 function render(){
-  document.querySelectorAll("#nav a").forEach(a=>a.setAttribute("aria-current",a.dataset.v===ui.view?"page":"false"));
+  const sec=secOf(ui.view);
+  document.getElementById("nav").innerHTML=Object.entries(VIEWS).filter(([,v])=>v.sec===sec)
+    .map(([k,v])=>`<a href="#${k}" data-v="${k}" aria-current="${k===ui.view?"page":"false"}">${v.label}</a>`).join("");
+  document.querySelectorAll("#seg button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.sec===sec?"true":"false"));
   document.getElementById("month").value=ui.month;
   for(const k in charts){charts[k].destroy();delete charts[k];}
-  const fn={dashboard:renderDashboard,entry:renderEntry,team:renderTeam,jobs:renderJobs}[ui.view]||renderDashboard;
+  const fn={dashboard:renderDashboard,entry:renderEntry,team:renderTeam,jobs:renderJobs,plan:renderPlan,brands:renderBrands}[ui.view]||renderDashboard;
   view().innerHTML=connNote()+fn();
   updateBadge();
   if(ui.view==="dashboard")drawDashCharts();
+  if(ui.view==="brands")drawBrandChart();
 }
 function pill(st){return st?`<span class="pill s-${st}">${st==="Below"?"Below LPI":st}</span>`:`<span class="pill s-none">No data</span>`;}
 function meter(v){if(v==null)return"";const st=statusOf(v);const col={EPI:"var(--epi)",MPI:"var(--mpi)",LPI:"var(--lpi)",Below:"var(--low)"}[st];
@@ -450,15 +485,176 @@ function renderJobs(){
   </div>`;
 }
 
+// ---------- Deliverables: model ----------
+// Completely separate from the metrics side: its own config.brands and bmonths.
+const brandById=id=>config.brands.find(b=>b.id===id);
+const canon=o=>JSON.stringify(Object.keys(o).sort().map(k=>[k,o[k]]));
+function planQty(m,bid,iid){const v=bmonths[m]&&bmonths[m].q&&bmonths[m].q[bid]?bmonths[m].q[bid][iid]:undefined;return(v===""||v==null)?null:+v;}
+function brandRows(b,m){return (b.items||[]).map(i=>({i,qty:planQty(m,b.id,i.id)}));}
+function brandTotal(b,m){return brandRows(b,m).reduce((t,r)=>t+(r.qty||0),0);}
+function planBoard(m){
+  return config.brands.map(b=>({b,rows:brandRows(b,m),total:brandTotal(b,m)})).sort((x,y)=>y.total-x.total);
+}
+function typeTotals(m){
+  const map={};
+  config.brands.forEach(b=>brandRows(b,m).forEach(r=>{
+    if(!r.qty)return;
+    const name=String(r.i.name).trim(), key=name.toLowerCase();
+    if(!map[key])map[key]={name,qty:0,brands:new Set()};
+    map[key].qty+=r.qty; map[key].brands.add(b.id);
+  }));
+  return Object.values(map).map(x=>({name:x.name,qty:x.qty,brands:x.brands.size})).sort((a,b)=>b.qty-a.qty);
+}
+
+// ---------- Deliverables: Plan (manual entry) ----------
+function renderPlan(){
+  const m=ui.month;
+  const addBrand=`<form id="addBrand" class="row" style="margin-top:10px">
+      <input type="text" id="newBrand" placeholder="Brand name, e.g. MyHealthSchool" required aria-label="Brand name" style="flex:1;min-width:180px">
+      <button class="primary" type="submit">Add brand</button></form>`;
+  if(!config.brands.length)return `<div class="card"><h2>Add your first brand</h2>
+    <p class="muted small" style="margin:6px 0 0">Each brand holds its own deliverables — ads, stories, carousels, whatever you ship for them — and you set how many of each go out this month.</p>${addBrand}</div>`;
+  if(!ui.brandSel||!config.brands.some(b=>b.id===ui.brandSel))ui.brandSel=config.brands[0].id;
+  const b=brandById(ui.brandSel), q=(bmonths[m]&&bmonths[m].q&&bmonths[m].q[b.id])||{};
+  const saved={}; (b.items||[]).forEach(i=>{if(q[i.id]!==""&&q[i.id]!=null)saved[i.id]=+q[i.id];});
+  const dkey=m+"|"+b.id, sj=canon(saved), dr=ui.bdrafts[dkey];
+  if(!dr||(dr.base!==sj&&canon(dr.d)===dr.base))ui.bdrafts[dkey]={base:sj,d:Object.assign({},saved)};
+  const d=ui.bdrafts[dkey].d, dirty=canon(d)!==sj;
+  const total=Object.values(d).reduce((t,v)=>t+(+v||0),0);
+  const names=[...new Set(config.brands.flatMap(x=>(x.items||[]).map(i=>i.name)))].sort();
+  return `
+  <div class="row between"><h1 style="font-size:22px">Deliverables plan · ${esc(monthLabel(m))}</h1>
+    <span class="muted small">Set how many of each deliverable this brand gets this month.</span></div>
+  <div class="entrygrid">
+    <div>
+      <div class="card plist" role="group" aria-label="Brands">
+        ${config.brands.map(x=>`<button data-brand="${x.id}" aria-pressed="${x.id===b.id}"><span>${esc(x.name)}</span><span class="small muted num">${brandTotal(x,m)||"–"}</span></button>`).join("")}
+      </div>
+      <div class="card" style="margin-top:12px"><h3>Add a brand</h3>${addBrand}</div>
+    </div>
+    <div class="card">
+      <div class="row between">
+        <div class="row"><input type="text" id="bname-${b.id}" data-bname="${b.id}" value="${esc(b.name)}" aria-label="Brand name" style="font-weight:700;font-size:16px;width:230px">
+          <span class="tag num" id="planTotal">${total} this month</span></div>
+        ${ui.confirmDel===b.id?`<div class="row"><span class="small">Remove ${esc(b.name)} and its deliverables?</span><button class="danger" data-bdelyes="${b.id}">Remove</button><button class="ghost" data-delno="1">Cancel</button></div>`
+          :`<div class="row"><button id="copyPrevPlan">Copy from ${esc(monthLabel(shiftMonth(m,-1)))}</button><button class="primary" id="savePlan" ${dirty?"":"disabled"}>${dirty?"Save":"Saved"}</button><button class="ghost danger" data-bdel="${b.id}">Remove brand</button></div>`}
+      </div>
+      ${(b.items&&b.items.length)?`<div style="margin-top:14px">
+        <div class="delrow" style="border-bottom:1px solid var(--line)"><div class="small muted" style="text-transform:uppercase;letter-spacing:.04em;font-weight:600">Deliverable</div><div class="small muted r" style="text-align:right;text-transform:uppercase;letter-spacing:.04em;font-weight:600">Qty</div><div></div></div>
+        ${b.items.map(i=>`<div class="delrow">
+          <div><input type="text" id="iname-${i.id}" data-iname="${i.id}" data-b="${b.id}" value="${esc(i.name)}" aria-label="Deliverable name" style="width:100%"></div>
+          <div><input class="cell num" type="number" min="0" step="1" inputmode="numeric" id="q-${i.id}" data-q="${i.id}" value="${d[i.id]??""}" aria-label="${esc(i.name)} quantity" style="width:100%"></div>
+          <div>${ui.confirmDel===i.id?`<button class="danger" data-idelyes="${i.id}" data-b="${b.id}">Delete</button> <button class="ghost" data-delno="1">Cancel</button>`:`<button class="ghost danger" data-idel="${i.id}">Remove</button>`}</div>
+        </div>`).join("")}
+      </div>`:`<div class="empty">No deliverables for ${esc(b.name)} yet. Add the first one below.</div>`}
+      <form id="addItem" class="row" style="margin-top:14px">
+        <input type="text" id="newItem" list="itemnames" placeholder="Deliverable, e.g. Ads" required aria-label="Deliverable name" style="flex:1;min-width:160px">
+        <datalist id="itemnames">${names.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
+        <input class="cell num" type="number" id="newItemQty" min="0" step="1" inputmode="numeric" placeholder="Qty" aria-label="Quantity">
+        <button class="primary" type="submit">Add deliverable</button>
+      </form>
+      <p class="muted small" style="margin:10px 0 0">Quantities are per month. Deliverable names are shared across brands in the overview, so keep the spelling the same (Ads, Story, Carousel…).</p>
+    </div>
+  </div>`;
+}
+
+// ---------- Deliverables: Overview (dashboard) ----------
+function renderBrands(){
+  const m=ui.month, board=planBoard(m), types=typeTotals(m);
+  if(!config.brands.length)return `<div class="card empty"><h2>No brands yet</h2><p>Add brands and their deliverables in <a href="#plan">Plan</a>.</p></div>`;
+  const grand=board.reduce((t,x)=>t+x.total,0), active=board.filter(x=>x.total>0).length, top=board[0];
+  if(!ui.brandDash||!config.brands.some(b=>b.id===ui.brandDash))ui.brandDash=(top&&top.b.id)||config.brands[0].id;
+  const sel=brandById(ui.brandDash), selRows=brandRows(sel,m).filter(r=>r.qty), selTotal=brandTotal(sel,m);
+  return `
+  <div class="row between"><h1 style="font-size:22px">${esc(monthLabel(m))} deliverables</h1>
+    <div class="row"><span class="muted small">${active} of ${config.brands.length} brands have a plan</span><button class="primary" id="exportPlanCsv">Export CSV</button></div></div>
+  <div class="tiles">
+    <div class="tile t-acc"><div class="l">Total deliverables</div><div class="v num">${grand||"–"}</div></div>
+    <div class="tile t-epi"><div class="l">Brands</div><div class="v num">${active}</div></div>
+    <div class="tile t-mpi"><div class="l">Deliverable types</div><div class="v num">${types.length}</div></div>
+    <div class="tile t-lpi"><div class="l">Biggest brand</div><div class="v" style="font-size:20px;padding-top:6px">${grand?esc(top.b.name)+' <span class="num muted">'+top.total+'</span>':"–"}</div></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><h2>By brand</h2>
+      <div class="tablewrap"><table><thead><tr><th>#</th><th>Brand</th><th class="r">Types</th><th class="r">Total</th><th></th><th class="r">Share</th></tr></thead><tbody>
+      ${board.map((x,n)=>`<tr><td class="num muted">${x.total?n+1:"–"}</td><td><button class="linkbtn" data-bdash="${x.b.id}">${esc(x.b.name)}</button></td>
+        <td class="r num">${x.rows.filter(r=>r.qty).length}</td><td class="r num"><b>${x.total||"–"}</b></td>
+        <td style="width:80px">${grand?`<div class="share" aria-hidden="true"><span style="width:${Math.round(x.total/grand*100)}%"></span></div>`:""}</td>
+        <td class="r num muted">${grand?Math.round(x.total/grand*100)+"%":"–"}</td></tr>`).join("")}
+      </tbody></table></div>
+    </div>
+    <div class="card"><h2>Total per brand</h2><div class="chartbox"><canvas id="brandChart" aria-label="Deliverables per brand"></canvas></div></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><h2>By deliverable</h2>
+      ${types.length?`<div class="tablewrap"><table><thead><tr><th>Deliverable</th><th class="r">Total</th><th class="r">Brands</th><th></th></tr></thead><tbody>
+      ${types.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td class="r num"><b>${t.qty}</b></td><td class="r num muted">${t.brands}</td>
+        <td style="width:90px"><div class="share" aria-hidden="true"><span style="width:${Math.round(t.qty/types[0].qty*100)}%"></span></div></td></tr>`).join("")}
+      </tbody></table></div>`:`<div class="empty">Nothing planned for ${esc(monthLabel(m))} yet. <a href="#plan">Set the quantities</a>.</div>`}
+    </div>
+    <div class="card">
+      <div class="row between"><h2>Brand detail</h2>
+        <label class="row small" for="brandDash">Brand <select id="brandDash">${config.brands.map(x=>`<option value="${x.id}" ${x.id===sel.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select></label></div>
+      ${selRows.length?`<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>Deliverable</th><th class="r">Qty</th><th class="r">Share</th></tr></thead><tbody>
+        ${selRows.map(r=>`<tr><td><b>${esc(r.i.name)}</b></td><td class="r num">${r.qty}</td><td class="r num muted">${Math.round(r.qty/selTotal*100)}%</td></tr>`).join("")}
+        <tr><td><b>Total</b></td><td class="r num"><b>${selTotal}</b></td><td></td></tr>
+      </tbody></table></div>`:`<div class="empty">Nothing planned for ${esc(sel.name)} in ${esc(monthLabel(m))}.</div>`}
+    </div>
+  </div>`;
+}
+function drawBrandChart(){
+  if(!window.Chart)return;
+  const el=document.getElementById("brandChart"); if(!el)return;
+  const board=planBoard(ui.month).filter(x=>x.total>0);
+  if(!board.length)return;
+  Chart.defaults.font.family=cssVar("--body"); Chart.defaults.color=cssVar("--muted");
+  charts.brand=new Chart(el,{type:"bar",data:{labels:board.map(x=>x.b.name),
+    datasets:[{data:board.map(x=>x.total),backgroundColor:cssVar("--accent"),borderRadius:6,maxBarThickness:42}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{display:false}},
+      scales:{y:{beginAtZero:true,ticks:{precision:0},grid:{color:cssVar("--line")}},x:{grid:{display:false}}}}});
+}
+async function exportPlanCSV(){
+  const m=ui.month, board=planBoard(m);
+  const rows=[["Month","Brand","Deliverable","Quantity"]];
+  board.forEach(x=>x.rows.forEach(r=>{if(r.qty)rows.push([monthLabel(m),x.b.name,r.i.name,r.qty]);}));
+  if(rows.length<2){toast("Nothing planned for "+monthLabel(m));return;}
+  rows.push([],["Total","","",board.reduce((t,x)=>t+x.total,0)]);
+  await download(`Deliverables ${monthLabel(m)}.csv`,new Blob([toCSV(rows)],{type:"text/csv;charset=utf-8"}));
+}
+
 // ---------- Events ----------
-function go(){const h=location.hash.slice(1);ui.view=["dashboard","entry","team","jobs"].includes(h)?h:"dashboard";ui.confirmDel=null;render();}
+function go(){const h=location.hash.slice(1);ui.view=VIEWS[h]?h:"dashboard";ui.confirmDel=null;render();}
 window.addEventListener("hashchange",go);
+document.getElementById("seg").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b)return;
+  location.hash=b.dataset.sec==="deliv"?"#plan":"#dashboard";
+});
 document.getElementById("month").addEventListener("change",e=>{if(e.target.value){ui.month=e.target.value;render();}});
 
 view().addEventListener("click",async e=>{
   const t=e.target.closest("button"); if(!t)return;
   if(t.dataset.dash){ui.dashPerson=t.dataset.dash;render();document.getElementById("dashPerson")?.scrollIntoView({block:"center"});return;}
   if(t.dataset.ep){ui.entryPerson=t.dataset.ep;render();return;}
+  if(t.dataset.brand){ui.brandSel=t.dataset.brand;ui.confirmDel=null;render();return;}
+  if(t.dataset.bdash){ui.brandDash=t.dataset.bdash;render();document.getElementById("brandDash")?.scrollIntoView({block:"center"});return;}
+  if(t.id==="savePlan"){
+    const m=ui.month,bid=ui.brandSel,d=ui.bdrafts[m+"|"+bid].d;
+    bmonths[m]=bmonths[m]||{q:{}}; bmonths[m].q=bmonths[m].q||{};
+    const clean={}; for(const [k,v] of Object.entries(d)){ if(v!==""&&v!=null&&isFinite(+v)) clean[k]=+v; }
+    bmonths[m].q[bid]=clean; ui.bdrafts[m+"|"+bid]={base:canon(clean),d:Object.assign({},clean)};
+    render(); const ok=await saveBrandMonth(m); if(ok)toast(sheet.url?"Saved to the sheet":"Saved in this browser"); return;
+  }
+  if(t.id==="copyPrevPlan"){
+    const m=ui.month,bid=ui.brandSel,pm=shiftMonth(m,-1);
+    const prev=(bmonths[pm]&&bmonths[pm].q&&bmonths[pm].q[bid])||{}, d=ui.bdrafts[m+"|"+bid].d;
+    let n=0; for(const [k,v] of Object.entries(prev)){ if(v!==""&&v!=null){ d[k]=+v; n++; } }
+    render(); toast(n?`Copied ${n} quantities. Press Save to keep them.`:"Nothing planned in "+monthLabel(pm)+"."); return;
+  }
+  if(t.id==="exportPlanCsv"){await exportPlanCSV();return;}
+  if(t.dataset.bdel||t.dataset.idel){ui.confirmDel=t.dataset.bdel||t.dataset.idel;render();return;}
+  if(t.dataset.bdelyes){config.brands=config.brands.filter(x=>x.id!==t.dataset.bdelyes);ui.confirmDel=null;ui.brandSel=null;render();await saveConfig();toast("Brand removed");return;}
+  if(t.dataset.idelyes){const b=brandById(t.dataset.b);if(b)b.items=(b.items||[]).filter(x=>x.id!==t.dataset.idelyes);
+    ui.confirmDel=null;ui.bdrafts={};render();await saveConfig();toast("Deliverable removed");return;}
   if(t.id==="saveEntry"){
     const m=ui.month,p=ui.entryPerson,d=ui.drafts[m+"|"+p].d;
     months[m]=months[m]||{e:{}}; months[m].e=months[m].e||{};
@@ -499,10 +695,22 @@ view().addEventListener("input",e=>{
     document.getElementById("st-"+t.dataset.j).innerHTML=ach==null?"":pill(statusOf(ach));
     const sb=document.getElementById("saveEntry"); sb.disabled=false; sb.textContent="Save";
   }
+  if(t.dataset.q){
+    const m=ui.month,bid=ui.brandSel,d=ui.bdrafts[m+"|"+bid].d;
+    if(t.value==="")delete d[t.dataset.q]; else d[t.dataset.q]=+t.value;
+    const tot=document.getElementById("planTotal");
+    if(tot)tot.textContent=Object.values(d).reduce((a,v)=>a+(+v||0),0)+" this month";
+    const sb=document.getElementById("savePlan"); if(sb){sb.disabled=false;sb.textContent="Save";}
+  }
 });
 view().addEventListener("change",async e=>{
   const t=e.target;
   if(t.id==="dashPerson"){ui.dashPerson=t.value;render();return;}
+  if(t.id==="brandDash"){ui.brandDash=t.value;render();return;}
+  if(t.dataset.bname){const b=brandById(t.dataset.bname);const v=t.value.trim();
+    if(b&&v&&v!==b.name){b.name=v;render();await saveConfig();toast("Brand renamed");}return;}
+  if(t.dataset.iname){const b=brandById(t.dataset.b);const it=b&&(b.items||[]).find(x=>x.id===t.dataset.iname);const v=t.value.trim();
+    if(it&&v&&v!==it.name){it.name=v;render();await saveConfig();toast("Deliverable renamed");}return;}
   if(t.dataset.pname){const p=config.team.find(x=>x.id===t.dataset.pname);const v=t.value.trim();if(p&&v&&v!==p.name){p.name=v;await saveConfig();toast("Name updated");}return;}
   if(t.dataset.plevel){const p=config.team.find(x=>x.id===t.dataset.plevel);if(p){p.level=t.value;
       // carry assignments over to the same job names at the new level
@@ -521,6 +729,17 @@ view().addEventListener("submit",async e=>{
   if(e.target.id==="addJob"){const lv=document.getElementById("jLevel").value,cat=document.getElementById("jCat").value.trim(),job=document.getElementById("jName").value.trim(),ck=document.getElementById("jCk").value;
     if(!cat||!job)return; for(const l of (lv==="Both"?["Junior","Senior"]:[lv])) config.lib.push({id:uid("j"),level:l,category:cat,job,ck});
     render();await saveConfig();toast(job+" added");}
+  if(e.target.id==="addBrand"){const name=document.getElementById("newBrand").value.trim();if(!name)return;
+    const b={id:uid("b"),name,items:[]};config.brands.push(b);ui.brandSel=b.id;ui.confirmDel=null;
+    render();await saveConfig();toast(name+" added. Now add its deliverables.");}
+  if(e.target.id==="addItem"){const b=brandById(ui.brandSel);if(!b)return;
+    const name=document.getElementById("newItem").value.trim(), qty=document.getElementById("newItemQty").value;
+    if(!name)return;
+    const it={id:uid("i"),name}; b.items=b.items||[]; b.items.push(it);
+    const k=ui.month+"|"+b.id, hasQty=qty!==""&&isFinite(+qty);
+    if(hasQty&&ui.bdrafts[k])ui.bdrafts[k].d[it.id]=+qty;
+    render();await saveConfig();
+    toast(hasQty?name+" added. Press Save to keep the quantity.":name+" added");}
 });
 
 // ---------- Downloads ----------

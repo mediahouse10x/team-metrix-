@@ -9,21 +9,33 @@
  *       Who has access:  Anyone
  * Copy the /exec URL and paste it into the page (Jobs & Settings → Google Sheet database).
  *
- * The sheet keeps four readable tabs, created automatically on first run:
- *   Jobs      id | level | category | job | ck
- *   Team      id | name  | level    | jobs (comma separated job ids)
- *   Settings  key | value
- *   Entries   month | personId | jobId | goal | actual
+ * The sheet keeps readable tabs, created automatically on first run.
+ *
+ * Team Metrics:
+ *   Jobs        id | level | category | job | ck
+ *   Team        id | name  | level    | jobs (comma separated job ids)
+ *   Settings    key | value
+ *   Entries     month | personId | jobId | goal | actual
+ *
+ * Deliverables (a separate feature — nothing here reads the tabs above):
+ *   Brands      id | name
+ *   BrandItems  brandId | itemId | name
+ *   Plan        month | brandId | itemId | quantity
  * You can read them freely. Edits made by hand are picked up the next time the page
  * loads or you press "Reload from sheet" — but a save from the page rewrites the tab,
  * so prefer entering data in the page.
  */
 
 var HEAD = {
-  Jobs:     ['id', 'level', 'category', 'job', 'ck'],
-  Team:     ['id', 'name', 'level', 'jobs'],
-  Settings: ['key', 'value'],
-  Entries:  ['month', 'personId', 'jobId', 'goal', 'actual']
+  // Team Metrics side
+  Jobs:       ['id', 'level', 'category', 'job', 'ck'],
+  Team:       ['id', 'name', 'level', 'jobs'],
+  Settings:   ['key', 'value'],
+  Entries:    ['month', 'personId', 'jobId', 'goal', 'actual'],
+  // Deliverables side (independent of the four above)
+  Brands:     ['id', 'name'],
+  BrandItems: ['brandId', 'itemId', 'name'],
+  Plan:       ['month', 'brandId', 'itemId', 'quantity']
 };
 
 /* ---------------- Web app entry points ---------------- */
@@ -51,9 +63,10 @@ function handle(req) {
   lock.waitLock(25000);
   try {
     switch (req.action) {
-      case 'load':       var all = loadAll(); return { ok: true, config: all.config, months: all.months };
+      case 'load':       var all = loadAll(); return { ok: true, config: all.config, months: all.months, bmonths: all.bmonths };
       case 'saveConfig': saveConfig(req.config || {}); return { ok: true };
       case 'saveMonth':  saveMonth(fmtMonth(req.month), req.entries || {}); return { ok: true };
+      case 'savePlan':   savePlan(fmtMonth(req.month), req.plan || {}); return { ok: true };
       case 'ping':       return { ok: true, sheet: SpreadsheetApp.getActiveSpreadsheet().getName() };
       default: throw new Error('Unknown action: ' + req.action);
     }
@@ -75,7 +88,7 @@ function tab(name) {
   if (s.getLastRow() === 0) {
     s.getRange(1, 1, 1, HEAD[name].length).setValues([HEAD[name]]).setFontWeight('bold');
     s.setFrozenRows(1);
-    if (name === 'Entries') s.getRange('A:A').setNumberFormat('@'); // keep "2026-11" as text
+    if (name === 'Entries' || name === 'Plan') s.getRange('A:A').setNumberFormat('@'); // keep "2026-11" as text
   }
   return s;
 }
@@ -135,7 +148,36 @@ function loadAll() {
     months[m].e[pid][jid] = { g: num(r[3]), a: num(r[4]) };
   });
 
-  return { config: { lib: lib, team: team, settings: settings }, months: months };
+  // ---- deliverables side ----
+  var itemsByBrand = {};
+  rowsOf('BrandItems').forEach(function (r) {
+    var bid = String(r[0]).trim(), iid = String(r[1]).trim();
+    if (!bid || !iid) return;
+    if (!itemsByBrand[bid]) itemsByBrand[bid] = [];
+    itemsByBrand[bid].push({ id: iid, name: String(r[2]) });
+  });
+
+  var brands = rowsOf('Brands').map(function (r) {
+    var id = String(r[0]).trim();
+    return { id: id, name: String(r[1]), items: itemsByBrand[id] || [] };
+  }).filter(function (x) { return x.id; });
+
+  var bmonths = {};
+  rowsOf('Plan').forEach(function (r) {
+    var m = fmtMonth(r[0]), bid = String(r[1]).trim(), iid = String(r[2]).trim();
+    if (!m || !bid || !iid) return;
+    var q = num(r[3]);
+    if (q === '') return;
+    if (!bmonths[m]) bmonths[m] = { q: {} };
+    if (!bmonths[m].q[bid]) bmonths[m].q[bid] = {};
+    bmonths[m].q[bid][iid] = q;
+  });
+
+  return {
+    config: { lib: lib, team: team, settings: settings, brands: brands },
+    months: months,
+    bmonths: bmonths
+  };
 }
 
 /* ---------------- Write ---------------- */
@@ -152,6 +194,35 @@ function saveConfig(config) {
   }));
 
   writeRows('Settings', Object.keys(settings).map(function (k) { return [k, settings[k]]; }));
+
+  var brands = config.brands || [];
+  writeRows('Brands', brands.map(function (b) { return [String(b.id), String(b.name)]; }));
+
+  var items = [];
+  brands.forEach(function (b) {
+    (b.items || []).forEach(function (i) { items.push([String(b.id), String(i.id), String(i.name)]); });
+  });
+  writeRows('BrandItems', items);
+}
+
+function savePlan(month, plan) {
+  if (!month) throw new Error('No month given.');
+
+  // keep every other month untouched, replace this month's rows
+  var keep = rowsOf('Plan').filter(function (r) { return fmtMonth(r[0]) !== month; })
+    .map(function (r) { return [fmtMonth(r[0]), String(r[1]), String(r[2]), num(r[3])]; });
+
+  var add = [];
+  Object.keys(plan).forEach(function (bid) {
+    var items = plan[bid] || {};
+    Object.keys(items).forEach(function (iid) {
+      var q = num(items[iid]);
+      if (q === '') return;
+      add.push([month, String(bid), String(iid), q]);
+    });
+  });
+
+  writeRows('Plan', keep.concat(add));
 }
 
 function saveMonth(month, entries) {
@@ -177,6 +248,6 @@ function saveMonth(month, entries) {
 /* ---------------- Run once from the editor if you want the tabs created early ---------------- */
 
 function setup() {
-  ['Jobs', 'Team', 'Settings', 'Entries'].forEach(tab);
+  ['Jobs', 'Team', 'Settings', 'Entries', 'Brands', 'BrandItems', 'Plan'].forEach(tab);
   SpreadsheetApp.getActiveSpreadsheet().toast('Tabs ready. Now deploy as a web app.');
 }

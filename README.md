@@ -1,11 +1,12 @@
 # Team Metrix
 
-A single-page tool with two independent sections, both backed by a **Google Sheet as the database**:
+A single-page tool with three sections, all backed by a **Google Sheet as the database**:
 
 - **Team Metrics** — monthly goal vs actual per person, per job.
 - **Deliverables** — what each brand gets this month, per deliverable type.
+- **Allocation** — that brand plan split across the team, with Key/Critical weights and responsibilities.
 
-The two share nothing but the sheet they live in.
+Metrics and Deliverables share nothing. Allocation *reads* the team list and the plan quantities so nothing is typed twice, and writes only its own data — neither of the other two reads anything from it.
 
 | File | What it is |
 |---|---|
@@ -27,6 +28,13 @@ The two share nothing but the sheet they live in.
 - **Overview** — total deliverables for the month, a ranked table by brand with each brand's share, totals by deliverable type across all brands, a per-brand breakdown and a bar chart. Exports to CSV.
 
 Quantities are per month, so each month stands on its own and past months stay readable.
+
+## Allocation
+
+- **Split** — pick a brand and give each team member their share of every deliverable. Each line shows `planned 120 · split 95 · 25 left` live as you type, and **Split evenly** divides a planned quantity across the team in one click. Each line is either a **Deliverable** (split as a count) or a **Responsibility** (just ticked for whoever owns it, no numbers), and carries a **Key** or **Critical** weight.
+- **Team load** — pieces split vs planned for the month and what is still unsplit, a per-person table with share, critical count and responsibilities, a bar chart, a per-person breakdown, and a "still to split" table naming every line where the split does not match the plan. Exports to CSV.
+
+The team list comes from Team & Roles and the quantities from the Deliverables plan, so the "still to split" figure is always honest.
 
 ## Scoring
 

@@ -38,6 +38,13 @@ Script-ஏ tab-களை உருவாக்கிக்கும்.
 | `BrandItems` | brandId, itemId, name |
 | `Plan` | month, brandId, itemId, quantity |
 
+**Allocation பகுதி** (Plan-ஐ team-க்கு பிரிச்சு கொடுக்கறது):
+
+| Tab | Columns |
+|---|---|
+| `AllocTags` | brandId, itemId, ck (Key/Critical), kind (count/resp) |
+| `Alloc` | month, brandId, itemId, personId, value |
+
 ஷீட்ல data-வ படிக்கலாம், pivot/chart போடலாம். ஆனா **கையால edit பண்ணாதீங்க** — page-ல இருந்து save ஆகும்போது அந்த tab மறுபடியும் எழுதப்படும். கையால மாத்தினா, page-ல **Reload from sheet** அழுத்தினா அது page-க்கு வரும்.
 
 ## முக்கியமான குறிப்புகள்

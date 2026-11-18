@@ -21,6 +21,10 @@
  *   Brands      id | name
  *   BrandItems  brandId | itemId | name
  *   Plan        month | brandId | itemId | quantity
+ *
+ * Allocation (splits the plan across the team; writes only its own two tabs):
+ *   AllocTags   brandId | itemId | ck (Key/Critical) | kind (count/resp)
+ *   Alloc       month | brandId | itemId | personId | value
  * You can read them freely. Edits made by hand are picked up the next time the page
  * loads or you press "Reload from sheet" — but a save from the page rewrites the tab,
  * so prefer entering data in the page.
@@ -35,7 +39,10 @@ var HEAD = {
   // Deliverables side (independent of the four above)
   Brands:     ['id', 'name'],
   BrandItems: ['brandId', 'itemId', 'name'],
-  Plan:       ['month', 'brandId', 'itemId', 'quantity']
+  Plan:       ['month', 'brandId', 'itemId', 'quantity'],
+  // Allocation side (reads nothing from the sheet the other sections own)
+  AllocTags:  ['brandId', 'itemId', 'ck', 'kind'],
+  Alloc:      ['month', 'brandId', 'itemId', 'personId', 'value']
 };
 
 /* ---------------- Web app entry points ---------------- */
@@ -63,10 +70,12 @@ function handle(req) {
   lock.waitLock(25000);
   try {
     switch (req.action) {
-      case 'load':       var all = loadAll(); return { ok: true, config: all.config, months: all.months, bmonths: all.bmonths };
+      case 'load':       var all = loadAll();
+                         return { ok: true, config: all.config, months: all.months, bmonths: all.bmonths, amonths: all.amonths };
       case 'saveConfig': saveConfig(req.config || {}); return { ok: true };
       case 'saveMonth':  saveMonth(fmtMonth(req.month), req.entries || {}); return { ok: true };
       case 'savePlan':   savePlan(fmtMonth(req.month), req.plan || {}); return { ok: true };
+      case 'saveAlloc':  saveAlloc(fmtMonth(req.month), req.alloc || {}); return { ok: true };
       case 'ping':       return { ok: true, sheet: SpreadsheetApp.getActiveSpreadsheet().getName() };
       default: throw new Error('Unknown action: ' + req.action);
     }
@@ -88,7 +97,7 @@ function tab(name) {
   if (s.getLastRow() === 0) {
     s.getRange(1, 1, 1, HEAD[name].length).setValues([HEAD[name]]).setFontWeight('bold');
     s.setFrozenRows(1);
-    if (name === 'Entries' || name === 'Plan') s.getRange('A:A').setNumberFormat('@'); // keep "2026-11" as text
+    if (name === 'Entries' || name === 'Plan' || name === 'Alloc') s.getRange('A:A').setNumberFormat('@'); // keep "2026-11" as text
   }
   return s;
 }
@@ -173,10 +182,32 @@ function loadAll() {
     bmonths[m].q[bid][iid] = q;
   });
 
+  // ---- allocation side ----
+  var atags = {};
+  rowsOf('AllocTags').forEach(function (r) {
+    var bid = String(r[0]).trim(), iid = String(r[1]).trim();
+    if (!bid || !iid) return;
+    atags[bid + '|' + iid] = {
+      ck: String(r[2]) === 'Critical' ? 'Critical' : 'Key',
+      kind: String(r[3]) === 'resp' ? 'resp' : 'count'
+    };
+  });
+
+  var amonths = {};
+  rowsOf('Alloc').forEach(function (r) {
+    var m = fmtMonth(r[0]), bid = String(r[1]).trim(), iid = String(r[2]).trim(), pid = String(r[3]).trim();
+    if (!m || !bid || !iid || !pid) return;
+    var v = num(r[4]);
+    if (v === '' || v <= 0) return;
+    if (!amonths[m]) amonths[m] = { a: {} };
+    amonths[m].a[bid + '|' + iid + '|' + pid] = v;
+  });
+
   return {
-    config: { lib: lib, team: team, settings: settings, brands: brands },
+    config: { lib: lib, team: team, settings: settings, brands: brands, atags: atags },
     months: months,
-    bmonths: bmonths
+    bmonths: bmonths,
+    amonths: amonths
   };
 }
 
@@ -203,6 +234,32 @@ function saveConfig(config) {
     (b.items || []).forEach(function (i) { items.push([String(b.id), String(i.id), String(i.name)]); });
   });
   writeRows('BrandItems', items);
+
+  var atags = config.atags || {};
+  writeRows('AllocTags', Object.keys(atags).map(function (k) {
+    var parts = k.split('|'), t = atags[k] || {};
+    return [parts[0] || '', parts[1] || '', t.ck === 'Critical' ? 'Critical' : 'Key', t.kind === 'resp' ? 'resp' : 'count'];
+  }));
+}
+
+function saveAlloc(month, alloc) {
+  if (!month) throw new Error('No month given.');
+
+  // keep every other month untouched, replace this month's rows
+  var keep = rowsOf('Alloc').filter(function (r) { return fmtMonth(r[0]) !== month; })
+    .map(function (r) { return [fmtMonth(r[0]), String(r[1]), String(r[2]), String(r[3]), num(r[4])]; });
+
+  var add = [];
+  Object.keys(alloc).forEach(function (k) {
+    var p = k.split('|');
+    if (p.length !== 3) return;
+    var v = num(alloc[k]);
+    if (v === '' || v <= 0) return;
+    add.push([month, p[0], p[1], p[2], v]);
+  });
+
+  add.sort(function (a, b) { return a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0; });
+  writeRows('Alloc', keep.concat(add));
 }
 
 function savePlan(month, plan) {
@@ -248,6 +305,6 @@ function saveMonth(month, entries) {
 /* ---------------- Run once from the editor if you want the tabs created early ---------------- */
 
 function setup() {
-  ['Jobs', 'Team', 'Settings', 'Entries', 'Brands', 'BrandItems', 'Plan'].forEach(tab);
+  ['Jobs', 'Team', 'Settings', 'Entries', 'Brands', 'BrandItems', 'Plan', 'AllocTags', 'Alloc'].forEach(tab);
   SpreadsheetApp.getActiveSpreadsheet().toast('Tabs ready. Now deploy as a web app.');
 }

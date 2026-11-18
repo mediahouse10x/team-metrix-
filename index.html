@@ -163,7 +163,7 @@ const amonths={};          // allocation:   "2026-11" -> {a:{"brandId|itemId|per
 const sheet={url:"",state:"off",msg:""};   // Google Sheet backend (Apps Script web app)
 const ui={view:"dashboard",month:currentMonth(),entryPerson:null,dashPerson:null,drafts:{},confirmDel:null,
           brandSel:null,brandDash:null,bdrafts:{},
-          allocBrand:null,allocPerson:null,adrafts:{}};
+          allocWho:null,allocPerson:null,adrafts:{}};
 const charts={};
 // Three independent sections. Allocation reads the team and the plan but writes only its own data;
 // the metrics and deliverables features behave exactly as they did before it existed.
@@ -657,7 +657,6 @@ const tkey=(b,i)=>b+"|"+i;
 function tagOf(bid,iid){const t=config.atags[tkey(bid,iid)]||{};return{ck:t.ck==="Critical"?"Critical":"Key",kind:t.kind==="resp"?"resp":"count"};}
 function allocVal(m,bid,iid,pid){const a=amonths[m]&&amonths[m].a;const v=a?a[akey(bid,iid,pid)]:undefined;return(v===""||v==null)?null:+v;}
 function lineSplit(m,bid,iid){return config.team.reduce((t,p)=>t+(allocVal(m,bid,iid,p.id)||0),0);}
-function brandSplitTotal(m,b){return (b.items||[]).reduce((t,i)=>t+(tagOf(b.id,i.id).kind==="count"?lineSplit(m,b.id,i.id):0),0);}
 function plannedCountTotal(m){
   let t=0; config.brands.forEach(b=>(b.items||[]).forEach(i=>{
     if(tagOf(b.id,i.id).kind!=="count")return; const q=planQty(m,b.id,i.id); if(q)t+=q;}));
@@ -692,75 +691,117 @@ function allocGaps(m){
   return out.sort((a,b)=>Math.abs(b.left)-Math.abs(a.left));
 }
 
-// The "planned N · split M · K left" line, recomputed live as quantities are typed.
-function draftSplit(item,d){return config.team.reduce((s,p)=>s+(+d[item.id+"|"+p.id]||0),0);}
-function lineInfoText(m,bid,item,d){
-  const t=tagOf(bid,item.id), split=draftSplit(item,d);
-  if(t.kind==="resp")return config.team.filter(p=>d[item.id+"|"+p.id]).length+" assigned";
-  const planned=planQty(m,bid,item.id);
+// The "planned N · split M · K left" line. The split total mixes everyone else's saved
+// numbers with the open draft of the person currently on screen, so it stays honest while typing.
+function lineSplitWith(m,bid,iid,pid,d){
+  return config.team.reduce((t,x)=>t+(x.id===pid?(+d[bid+"|"+iid]||0):(allocVal(m,bid,iid,x.id)||0)),0);
+}
+function lineAssignedWith(m,bid,iid,pid,d){
+  return config.team.filter(x=>x.id===pid?!!d[bid+"|"+iid]:!!allocVal(m,bid,iid,x.id)).length;
+}
+function lineLeft(m,bid,iid,pid,d){
+  const planned=planQty(m,bid,iid);
+  return planned==null?0:planned-lineSplitWith(m,bid,iid,pid,d);
+}
+function lineInfoText(m,bid,item,pid,d){
+  if(tagOf(bid,item.id).kind==="resp")return lineAssignedWith(m,bid,item.id,pid,d)+" assigned";
+  const split=lineSplitWith(m,bid,item.id,pid,d), planned=planQty(m,bid,item.id);
   if(planned==null)return "not in the plan · split "+split;
   const left=planned-split;
   return "planned "+planned+" · split "+split+" · "+(left===0?"all done":left>0?left+" left":Math.abs(left)+" over");
 }
-function lineInfoCls(m,bid,item,d){
+function lineInfoCls(m,bid,item,pid,d){
   if(tagOf(bid,item.id).kind==="resp")return "none";
   const planned=planQty(m,bid,item.id); if(planned==null)return "none";
-  const left=planned-draftSplit(item,d);
+  const left=planned-lineSplitWith(m,bid,item.id,pid,d);
   return left===0?"ok":left>0?"under":"over";
 }
+function draftTotals(d){
+  let pieces=0,resp=0,crit=0;
+  Object.keys(d).forEach(k=>{
+    if(!d[k])return;
+    const parts=k.split("|"), t=tagOf(parts[0],parts[1]);
+    if(t.kind==="resp")resp++; else pieces+=(+d[k]||0);
+    if(t.ck==="Critical")crit++;
+  });
+  return {pieces,resp,crit};
+}
+// Every deliverable the brand has is shown, planned or not — otherwise a line with no
+// quantity could never be reached to mark it as a responsibility.
+function visibleItems(m,b,pid,d){return b.items||[];}
+function brandSubtotal(m,b,pid,d){
+  return visibleItems(m,b,pid,d).reduce((t,i)=>t+(tagOf(b.id,i.id).kind==="count"?(+d[b.id+"|"+i.id]||0):0),0);
+}
 
-// ---------- Allocation: Split (manual entry) ----------
+// ---------- Allocation: Split (one editor at a time) ----------
 function renderSplit(){
   const m=ui.month;
   if(!config.team.length)return `<div class="card empty"><h2>No team members yet</h2><p>Add them in <a href="#team">Team &amp; Roles</a> — Allocation shares that same list, so nothing is typed twice.</p></div>`;
-  if(!config.brands.length)return `<div class="card empty"><h2>No brands yet</h2><p>Add brands and this month's quantities in <a href="#plan">Deliverables → Plan</a> first, then split them here.</p></div>`;
-  if(!ui.allocBrand||!config.brands.some(b=>b.id===ui.allocBrand))ui.allocBrand=config.brands[0].id;
-  const b=brandById(ui.allocBrand), items=b.items||[], a=(amonths[m]&&amonths[m].a)||{};
+  if(!config.brands.length)return `<div class="card empty"><h2>No brands yet</h2><p>Add brands and this month's quantities in <a href="#plan">Deliverables → Plan</a> first, then hand them out here.</p></div>`;
+  if(!ui.allocWho||!config.team.some(x=>x.id===ui.allocWho))ui.allocWho=config.team[0].id;
+  const p=config.team.find(x=>x.id===ui.allocWho), a=(amonths[m]&&amonths[m].a)||{};
   const saved={};
-  items.forEach(i=>config.team.forEach(p=>{const k=akey(b.id,i.id,p.id);if(a[k]!==""&&a[k]!=null)saved[i.id+"|"+p.id]=+a[k];}));
-  const dkey=m+"|"+b.id, sj=canon(saved), dr=ui.adrafts[dkey];
+  config.brands.forEach(b=>(b.items||[]).forEach(i=>{const k=akey(b.id,i.id,p.id);if(a[k]!==""&&a[k]!=null)saved[b.id+"|"+i.id]=+a[k];}));
+  const dkey=m+"|"+p.id, sj=canon(saved), dr=ui.adrafts[dkey];
   if(!dr||(dr.base!==sj&&canon(dr.d)===dr.base))ui.adrafts[dkey]={base:sj,d:Object.assign({},saved)};
-  const d=ui.adrafts[dkey].d, dirty=canon(d)!==sj;
+  const d=ui.adrafts[dkey].d, dirty=canon(d)!==sj, tot=draftTotals(d);
+  const blocks=config.brands.map(b=>({b,items:visibleItems(m,b,p.id,d)})).filter(x=>x.items.length);
   return `
   <div class="row between"><h1 style="font-size:22px">Split · ${esc(monthLabel(m))}</h1>
-    <span class="muted small">Give each person their share of this brand's deliverables. Quantities come from the Deliverables plan.</span></div>
+    <span class="muted small">Pick a person, then set what they deliver this month across every brand.</span></div>
   <div class="entrygrid">
-    <div class="card plist" role="group" aria-label="Brands">
-      ${config.brands.map(x=>{const pl=brandTotal(x,m),sp=brandSplitTotal(m,x);
-        return `<button data-abrand="${x.id}" aria-pressed="${x.id===b.id}"><span>${esc(x.name)}</span><span class="small muted num">${sp}/${pl||"–"}</span></button>`;}).join("")}
+    <div class="card plist" role="group" aria-label="Team members">
+      ${config.team.map(x=>{const l=personLoad(m,x);
+        return `<button data-awho="${x.id}" aria-pressed="${x.id===p.id}"><span>${esc(x.name)}</span><span class="small muted num">${l.qty||"–"}${l.resp?" +"+l.resp+"r":""}</span></button>`;}).join("")}
     </div>
     <div class="card">
       <div class="row between">
-        <div><h2>${esc(b.name)}</h2><span class="muted small">${config.team.length} people · ${items.length} deliverables</span></div>
+        <div><h2>${esc(p.name)}</h2><span class="muted small">${esc(p.level)} · <span id="whoTot">${tot.pieces} pieces · ${tot.resp} responsibilities · ${tot.crit} critical</span></span></div>
         <div class="row"><button id="copyPrevAlloc">Copy from ${esc(monthLabel(shiftMonth(m,-1)))}</button><button class="primary" id="saveAlloc" ${dirty?"":"disabled"}>${dirty?"Save":"Saved"}</button></div>
       </div>
-      ${items.length?items.map(i=>{const t=tagOf(b.id,i.id);return `
-        <div class="line">
-          <div class="row between">
-            <div class="row">
-              <b>${esc(i.name)}</b>
-              <select data-kind="${tkey(b.id,i.id)}" aria-label="${esc(i.name)} type">
-                <option value="count" ${t.kind==="count"?"selected":""}>Deliverable</option>
-                <option value="resp" ${t.kind==="resp"?"selected":""}>Responsibility</option></select>
-              <select data-ck="${tkey(b.id,i.id)}" aria-label="${esc(i.name)} weight">
-                <option value="Key" ${t.ck==="Key"?"selected":""}>Key</option>
-                <option value="Critical" ${t.ck==="Critical"?"selected":""}>Critical</option></select>
-              ${t.ck==="Critical"?'<span class="ck Critical">C</span>':""}
+      ${blocks.length?blocks.map(({b,items})=>`
+        <div class="row between" style="margin-top:16px;align-items:baseline">
+          <div class="cat" style="margin:0">${esc(b.name)}</div>
+          <span class="small muted num">this person: <b id="bsub-${b.id}">${brandSubtotal(m,b,p.id,d)}</b> · brand plan: ${brandTotal(b,m)||"–"}</span>
+        </div>
+        ${items.map(i=>{const t=tagOf(b.id,i.id), k=b.id+"|"+i.id, v=d[k], left=lineLeft(m,b.id,i.id,p.id,d);
+          return `<div class="line">
+            <div class="row between">
+              <div class="row">
+                <b>${esc(i.name)}</b>
+                <select data-kind="${k}" aria-label="${esc(i.name)} type">
+                  <option value="count" ${t.kind==="count"?"selected":""}>Deliverable</option>
+                  <option value="resp" ${t.kind==="resp"?"selected":""}>Responsibility</option></select>
+                <select data-ck="${k}" aria-label="${esc(i.name)} weight">
+                  <option value="Key" ${t.ck==="Key"?"selected":""}>Key</option>
+                  <option value="Critical" ${t.ck==="Critical"?"selected":""}>Critical</option></select>
+                ${t.ck==="Critical"?'<span class="ck Critical">C</span>':""}
+              </div>
+              <div class="row">
+                <span class="lineinfo ${lineInfoCls(m,b.id,i,p.id,d)}" id="info-${k}">${lineInfoText(m,b.id,i,p.id,d)}</span>
+                ${t.kind==="count"&&left>0?`<button class="ghost" data-take="${k}">Take ${left}</button>`:""}
+                ${t.kind==="resp"
+                  ? `<label class="jobs" style="display:flex;gap:6px;align-items:center;border:1px solid ${v?"var(--accent)":"var(--line)"};border-radius:8px;padding:5px 10px;font-size:13px" for="av-${k}">Owns this <input type="checkbox" id="av-${k}" data-ar="${k}" ${v?"checked":""}></label>`
+                  : `<input class="cell num" type="number" min="0" step="1" inputmode="numeric" id="av-${k}" data-av="${k}" value="${v??""}" aria-label="${esc(p.name)} ${esc(i.name)}">`}
+              </div>
             </div>
-            <div class="row"><span class="lineinfo ${lineInfoCls(m,b.id,i,d)}" id="info-${i.id}">${lineInfoText(m,b.id,i,d)}</span>${t.kind==="count"&&planQty(m,b.id,i.id)?`<button class="ghost" data-even="${i.id}">Split evenly</button>`:""}</div>
-          </div>
-          <div class="agrid">
-            ${config.team.map(p=>{const k=i.id+"|"+p.id, v=d[k];
-              return t.kind==="resp"
-                ? `<label class="${v?"on":""}" for="av-${k}"><span>${esc(p.name)}</span><input type="checkbox" id="av-${k}" data-ar="${k}" ${v?"checked":""}></label>`
-                : `<label class="${v?"on":""}" for="av-${k}"><span>${esc(p.name)}</span><input type="number" min="0" step="1" inputmode="numeric" id="av-${k}" data-av="${k}" value="${v??""}" aria-label="${esc(p.name)} ${esc(i.name)}"></label>`;}).join("")}
-          </div>
-        </div>`;}).join(""):`<div class="empty">${esc(b.name)} has no deliverables yet. <a href="#plan">Add them in the plan</a>.</div>`}
-      <p class="muted small" style="margin:12px 0 0">A <b>Deliverable</b> line is split as a count. A <b>Responsibility</b> line is just ticked for whoever owns it — no numbers. Both carry a Key or Critical weight.</p>
+          </div>`;}).join("")}`).join(""):`<div class="empty">Nothing is planned for ${esc(monthLabel(m))} yet. <a href="#plan">Set the brand quantities</a> first.</div>`}
+      <p class="muted small" style="margin:14px 0 0">A <b>Deliverable</b> line is a count — <b>Take N</b> drops whatever is still unassigned into this person's box. A <b>Responsibility</b> line has no number, you just tick whoever owns it. Both carry a Key or Critical weight, and both show how much of that line is already spread across the team.</p>
     </div>
   </div>`;
 }
-
+function refreshSplitLive(m,pid,d,k){
+  const parts=k.split("|"), bid=parts[0], iid=parts[1], b=brandById(bid);
+  const item=b&&(b.items||[]).find(x=>x.id===iid);
+  if(item){
+    const el=document.getElementById("info-"+k);
+    if(el){el.className="lineinfo "+lineInfoCls(m,bid,item,pid,d);el.textContent=lineInfoText(m,bid,item,pid,d);}
+  }
+  if(b){const bs=document.getElementById("bsub-"+bid); if(bs)bs.textContent=brandSubtotal(m,b,pid,d);}
+  const tot=draftTotals(d), wt=document.getElementById("whoTot");
+  if(wt)wt.textContent=`${tot.pieces} pieces · ${tot.resp} responsibilities · ${tot.crit} critical`;
+  const sb=document.getElementById("saveAlloc"); if(sb){sb.disabled=false;sb.textContent="Save";}
+}
 // ---------- Allocation: Team load (overview) ----------
 function renderLoad(){
   const m=ui.month, board=loadBoard(m), gaps=allocGaps(m);
@@ -864,30 +905,29 @@ view().addEventListener("click",async e=>{
     render(); toast(n?`Copied ${n} quantities. Press Save to keep them.`:"Nothing planned in "+monthLabel(pm)+"."); return;
   }
   if(t.id==="exportPlanCsv"){await exportPlanCSV();return;}
-  if(t.dataset.abrand){ui.allocBrand=t.dataset.abrand;render();return;}
+  if(t.dataset.awho){ui.allocWho=t.dataset.awho;render();return;}
   if(t.dataset.adash){ui.allocPerson=t.dataset.adash;render();document.getElementById("allocPerson")?.scrollIntoView({block:"center"});return;}
   if(t.id==="saveAlloc"){
-    const m=ui.month,bid=ui.allocBrand,d=ui.adrafts[m+"|"+bid].d;
+    const m=ui.month,pid=ui.allocWho,d=ui.adrafts[m+"|"+pid].d,suffix="|"+pid;
     amonths[m]=amonths[m]||{a:{}}; amonths[m].a=amonths[m].a||{};
-    for(const k of Object.keys(amonths[m].a))if(k.indexOf(bid+"|")===0)delete amonths[m].a[k];
+    for(const k of Object.keys(amonths[m].a))if(k.slice(-suffix.length)===suffix)delete amonths[m].a[k];
     const clean={};
-    for(const [k,v] of Object.entries(d)){ if(v!==""&&v!=null&&+v>0){ clean[k]=+v; amonths[m].a[bid+"|"+k]=+v; } }
-    ui.adrafts[m+"|"+bid]={base:canon(clean),d:Object.assign({},clean)};
+    for(const [k,v] of Object.entries(d)){ if(v!==""&&v!=null&&+v>0){ clean[k]=+v; amonths[m].a[k+suffix]=+v; } }
+    ui.adrafts[m+"|"+pid]={base:canon(clean),d:Object.assign({},clean)};
     render(); const ok=await saveAllocMonth(m); if(ok)toast(sheet.url?"Saved to the sheet":"Saved in this browser"); return;
   }
   if(t.id==="copyPrevAlloc"){
-    const m=ui.month,bid=ui.allocBrand,pm=shiftMonth(m,-1);
-    const pa=(amonths[pm]&&amonths[pm].a)||{}, d=ui.adrafts[m+"|"+bid].d;
-    let n=0; for(const [k,v] of Object.entries(pa)){ if(k.indexOf(bid+"|")!==0)continue; if(v!==""&&v!=null){d[k.slice(bid.length+1)]=+v;n++;} }
-    render(); toast(n?`Copied ${n} entries. Press Save to keep them.`:"Nothing split in "+monthLabel(pm)+"."); return;
+    const m=ui.month,pid=ui.allocWho,pm=shiftMonth(m,-1),suffix="|"+pid;
+    const pa=(amonths[pm]&&amonths[pm].a)||{}, d=ui.adrafts[m+"|"+pid].d;
+    let n=0; for(const [k,v] of Object.entries(pa)){ if(k.slice(-suffix.length)!==suffix)continue; if(v!==""&&v!=null){d[k.slice(0,k.length-suffix.length)]=+v;n++;} }
+    render(); toast(n?`Copied ${n} lines. Press Save to keep them.`:"Nothing was split to them in "+monthLabel(pm)+"."); return;
   }
-  if(t.dataset.even){
-    const m=ui.month,bid=ui.allocBrand,iid=t.dataset.even,d=ui.adrafts[m+"|"+bid].d;
-    const planned=planQty(m,bid,iid)||0, n=config.team.length;
-    if(!planned||!n)return;
-    const base=Math.floor(planned/n), extra=planned-base*n;
-    config.team.forEach((p,idx)=>{const q=base+(idx<extra?1:0); if(q>0)d[iid+"|"+p.id]=q; else delete d[iid+"|"+p.id];});
-    render(); toast(`Split ${planned} across ${n} people. Press Save to keep it.`); return;
+  if(t.dataset.take){
+    const m=ui.month,pid=ui.allocWho,k=t.dataset.take,d=ui.adrafts[m+"|"+pid].d,parts=k.split("|");
+    const left=lineLeft(m,parts[0],parts[1],pid,d);
+    if(left<=0)return;
+    d[k]=(+d[k]||0)+left;
+    render(); toast(`Gave ${left} more. Press Save to keep it.`); return;
   }
   if(t.id==="exportAllocCsv"){await exportAllocCSV();return;}
   if(t.dataset.bdel||t.dataset.idel){ui.confirmDel=t.dataset.bdel||t.dataset.idel;render();return;}
@@ -942,31 +982,21 @@ view().addEventListener("input",e=>{
     const sb=document.getElementById("savePlan"); if(sb){sb.disabled=false;sb.textContent="Save";}
   }
   if(t.dataset.av){
-    const m=ui.month,bid=ui.allocBrand,d=ui.adrafts[m+"|"+bid].d,k=t.dataset.av,iid=k.split("|")[0];
+    const m=ui.month,pid=ui.allocWho,d=ui.adrafts[m+"|"+pid].d,k=t.dataset.av;
     if(t.value===""||+t.value<=0)delete d[k]; else d[k]=+t.value;
-    const lab=t.closest("label"); if(lab)lab.classList.toggle("on",!!d[k]);
-    refreshLineInfo(m,bid,iid,d);
-    const sb=document.getElementById("saveAlloc"); if(sb){sb.disabled=false;sb.textContent="Save";}
+    refreshSplitLive(m,pid,d,k);
   }
 });
-function refreshLineInfo(m,bid,iid,d){
-  const el=document.getElementById("info-"+iid), b=brandById(bid);
-  const item=b&&(b.items||[]).find(x=>x.id===iid);
-  if(!el||!item)return;
-  el.className="lineinfo "+lineInfoCls(m,bid,item,d);
-  el.textContent=lineInfoText(m,bid,item,d);
-}
 view().addEventListener("change",async e=>{
   const t=e.target;
   if(t.id==="dashPerson"){ui.dashPerson=t.value;render();return;}
   if(t.id==="brandDash"){ui.brandDash=t.value;render();return;}
   if(t.id==="allocPerson"){ui.allocPerson=t.value;render();return;}
   if(t.dataset.ar){
-    const m=ui.month,bid=ui.allocBrand,d=ui.adrafts[m+"|"+bid].d,k=t.dataset.ar,iid=k.split("|")[0];
+    const m=ui.month,pid=ui.allocWho,d=ui.adrafts[m+"|"+pid].d,k=t.dataset.ar;
     if(t.checked)d[k]=1; else delete d[k];
-    const lab=t.closest("label"); if(lab)lab.classList.toggle("on",!!t.checked);
-    refreshLineInfo(m,bid,iid,d);
-    const sb=document.getElementById("saveAlloc"); if(sb){sb.disabled=false;sb.textContent="Save";}
+    const lab=t.closest("label"); if(lab)lab.style.borderColor=t.checked?"var(--accent)":"var(--line)";
+    refreshSplitLive(m,pid,d,k);
     return;}
   if(t.dataset.kind||t.dataset.ck){
     const key=t.dataset.kind||t.dataset.ck, cur=config.atags[key]||{};

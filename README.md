@@ -31,7 +31,7 @@ Quantities are per month, so each month stands on its own and past months stay r
 
 ## Allocation
 
-- **Split** — pick a brand and give each team member their share of every deliverable. Each line shows `planned 120 · split 95 · 25 left` live as you type, and **Split evenly** divides a planned quantity across the team in one click. Each line is either a **Deliverable** (split as a count) or a **Responsibility** (just ticked for whoever owns it, no numbers), and carries a **Key** or **Critical** weight.
+- **Split** — the team list comes first. Pick a person and you see everything they deliver this month, grouped by brand: each of that brand's deliverables with one box for this person, their running total per brand, and `pieces · responsibilities · critical` for the whole month. Every line shows `planned 60 · split 40 · 20 left` across the whole team as you type, and **Take 20** drops whatever is still unassigned into this person's box. Each line is either a **Deliverable** (a count) or a **Responsibility** (ticked for whoever owns it, no numbers), and carries a **Key** or **Critical** weight.
 - **Team load** — pieces split vs planned for the month and what is still unsplit, a per-person table with share, critical count and responsibilities, a bar chart, a per-person breakdown, and a "still to split" table naming every line where the split does not match the plan. Exports to CSV.
 
 The team list comes from Team & Roles and the quantities from the Deliverables plan, so the "still to split" figure is always honest.

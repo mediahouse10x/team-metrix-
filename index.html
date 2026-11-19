@@ -190,7 +190,7 @@ const sheet={url:"",state:"off",msg:""};   // Google Sheet backend (Apps Script 
 const ui={view:"dashboard",month:currentMonth(),entryPerson:null,dashPerson:null,drafts:{},confirmDel:null,
           brandSel:null,brandDash:null,bdrafts:{},
           allocWho:null,allocPerson:null,adrafts:{},
-          structSel:null,podEdit:null};
+          podEdit:null};
 const charts={};
 // Three independent sections. Allocation reads the team and the plan but writes only its own data;
 // the metrics and deliverables features behave exactly as they did before it existed.
@@ -918,22 +918,27 @@ async function exportAllocCSV(){
   await download(`Allocation ${monthLabel(m)}.csv`,new Blob([toCSV(rows)],{type:"text/csv;charset=utf-8"}));
 }
 
-// ---------- Structure: pods, brand owners, member roles ----------
-// All the rules live in model.js (TMModel) so they can be tested on their own.
-// The month picker is the structure selector: one structure per month.
+// ---------- Structure: pods ----------
+// Two screens only. The builder lists the pods; pressing Edit opens one pod and
+// everything about that pod is decided there — which channels, which people, who
+// owns what. Nothing is pre-filled: brands come from Deliverables, people from
+// Team & Roles, and you pick from those lists.
 const POD_COLORS=["#2f6b4f","#1f6f8b","#a36a00","#7a4fb5","#b8520f","#4a6b2f","#9b2f5f","#5d6b62"];
 const memberById=id=>config.team.find(p=>p.id===id);
 function structOf(m){
   if(!smonths[m])smonths[m]=TMModel.emptyStructure();
   const s=smonths[m];
-  ["pods"].forEach(k=>{if(!Array.isArray(s[k]))s[k]=[];});
+  if(!Array.isArray(s.pods))s.pods=[];
   ["bpod","bteam","mpod","roles","own"].forEach(k=>{if(!s[k]||typeof s[k]!=="object")s[k]={};});
   if(!s.meta)s.meta={manager:"",lead:""};
   return s;
 }
-// After a move, drop anyone who no longer belongs: a channel's crew and its owners must
-// sit in the channel's pod (or be floaters). Brands parked in Unassigned keep theirs, so
-// dragging one out and back does not lose the setup.
+function piecesFor(m,pid){ const p=memberById(pid); return p?personLoad(m,p).qty:0; }
+function structIssues(m){
+  return TMModel.validate({struct:structOf(m),brands:config.brands,team:config.team,loadFor:pid=>piecesFor(m,pid)});
+}
+// After a move, drop anyone who no longer belongs: a channel's crew and owners must sit
+// in that channel's pod, or be floaters. Brands left Unassigned keep theirs.
 function pruneStructure(s){
   Object.keys(s.bteam).forEach(bid=>{
     const pod=s.bpod[bid]; if(!pod)return;
@@ -949,15 +954,176 @@ function pruneStructure(s){
     if(!o.p&&!o.b)delete s.own[bid];
   });
 }
-function piecesFor(m,pid){ const p=memberById(pid); return p?personLoad(m,p).qty:0; }
-function structIssues(m){
-  return TMModel.validate({struct:structOf(m),brands:config.brands,team:config.team,loadFor:pid=>piecesFor(m,pid)});
+const SKILLS=["video edit","design","motion","writing","shooting"];
+const PLATFORMS=["Instagram","YouTube","Facebook","Other"];
+const FORMATS=["reel","carousel","post","story","ad video","ad static","ad variant"];
+
+function renderPods(){
+  const m=ui.month;
+  if(ui.podEdit&&TMModel.podById(structOf(m),ui.podEdit))return renderPodEditor(m);
+  const s=structOf(m), pods=TMModel.sortedPods(s), v=structIssues(m);
+  const unBrands=config.brands.filter(b=>!s.bpod[b.id]);
+  const unMembers=config.team.filter(p=>!s.mpod[p.id]);
+  return `
+  <div class="row between"><h1 style="font-size:22px">Structure · ${esc(monthLabel(m))}</h1>
+    <div class="row"><button id="copyPrevStruct">Copy from ${esc(monthLabel(shiftMonth(m,-1)))}</button><button class="primary" id="addPod">New pod</button></div></div>
+  <p class="muted small" style="margin:-8px 0 0">Channels come from <a href="#plan">Deliverables → Plan</a> and people from <a href="#team">Team &amp; Roles</a> — the same lists, not copies. Press <b>Edit</b> on a pod to decide what goes in it.</p>
+  ${issueCard(v)}
+  ${pods.length?`<div class="podgrid">
+    ${pods.map((pod,ix)=>podSummary(m,s,pod,ix,pods.length)).join("")}
+    ${unBrands.length||unMembers.length?`<div class="pod" data-drop="">
+      <div class="head" style="background:var(--muted)"><span>Not in any pod</span></div>
+      <div class="body">
+        ${unBrands.length?`<div class="sublab" style="margin-top:0">Channels</div><div class="chips">${unBrands.map(b=>`<span class="chip" data-drag="brand:${b.id}">${esc(b.name)}</span>`).join("")}</div>`:""}
+        ${unMembers.length?`<div class="sublab">People</div><div class="chips">${unMembers.map(p=>`<span class="chip" data-drag="member:${p.id}">${esc(TMModel.displayNameOf(p))}</span>`).join("")}</div>`:""}
+        <p class="muted small" style="margin:10px 0 0">Open a pod and tick them, or drag them onto one.</p>
+      </div></div>`:""}
+  </div>`:`<div class="card empty"><h2>No pods yet</h2><p>Press <b>New pod</b>, give it a name, then pick its channels and people.</p></div>`}
+  <div class="card">
+    <h2>Manager and team lead</h2>
+    <div class="flds">
+      <label for="stMgr">Manager<input type="text" id="stMgr" data-stmeta="manager" value="${esc(s.meta.manager||"")}" placeholder="Name"></label>
+      <label for="stLead">Team lead<select id="stLead" data-stmeta="lead"><option value="">—</option>
+        ${config.team.map(p=>`<option value="${p.id}" ${s.meta.lead===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select></label>
+    </div>
+  </div>`;
 }
+
+function issueCard(v){
+  if(!v.errors.length&&!v.warnings.length)return `<div class="card"><div class="row between"><h2>No problems found</h2><span class="small" style="color:var(--epi);font-weight:700">Ready to use</span></div></div>`;
+  return `<div class="card" style="border-color:${v.errors.length?"var(--low)":"var(--mpi)"}">
+    <div class="row between"><h2>${v.errors.length?"Fix these":"Worth a look"}</h2>
+      <span class="small ${v.errors.length?"":"muted"}" style="${v.errors.length?"color:var(--low);font-weight:700":""}">${v.errors.length} error${v.errors.length===1?"":"s"} · ${v.warnings.length} warning${v.warnings.length===1?"":"s"}</span></div>
+    ${v.errors.map(e=>`<div class="issue"><span class="err">Error</span> ${esc(e.msg)}</div>`).join("")}
+    ${v.warnings.map(w=>`<div class="issue"><span class="warn">Warning</span> ${esc(w.msg)}</div>`).join("")}
+  </div>`;
+}
+
+// Read-only card. All editing happens behind the Edit button.
+function podSummary(m,s,pod,ix,n){
+  const brands=config.brands.filter(b=>s.bpod[b.id]===pod.id);
+  const members=config.team.filter(p=>s.mpod[p.id]===pod.id);
+  return `
+  <div class="pod" data-drop="${pod.id}">
+    <div class="head" style="background:${esc(pod.color||"#2f6b4f")}">
+      <span>${esc(pod.name)} <span class="t">${esc(pod.type)}</span></span>
+      <button data-podedit="${pod.id}">Edit</button>
+    </div>
+    <div class="body">
+      <div class="sublab" style="margin-top:0">Channels · ${brands.length}</div>
+      ${brands.length?`<div class="chips">${brands.map(b=>{const own=ownerLabel(m,b.id),crew=TMModel.peopleOnBrand(s,b.id).length;
+        return `<span class="chip" data-drag="brand:${b.id}" title="${esc(b.name)} · ${crew} ${crew===1?"person":"people"}">${esc(b.name)}<span class="own" ${own?"":'style="color:var(--low)"'}>${own?esc(own)+(crew>1?" +"+(crew-1):""):"no owner"}</span></span>`;}).join("")}</div>`
+        :`<p class="muted small" style="margin:5px 0 0">None yet.</p>`}
+      <div class="sublab">People · ${members.length}</div>
+      ${members.length?members.map(p=>{const roles=TMModel.rolesOf(s,p.id);
+        return `<div class="mcard" data-drag="member:${p.id}">
+          <span><b>${esc(TMModel.displayNameOf(p))}</b></span>
+          <span class="row" style="gap:4px"><span class="rtag ${p.level==="Senior"?"sr":""}">${p.level==="Senior"?"SR":"JR"}</span>
+          ${roles.map(r=>`<span class="rtag">${esc((TMModel.ROLES.find(x=>x.id===r)||{label:r}).label)}</span>`).join("")}</span></div>`;}).join("")
+        :`<p class="muted small" style="margin:5px 0 0">Nobody yet.</p>`}
+      <div class="row" style="margin-top:12px">
+        <button data-podmove="${pod.id}" data-dir="-1" ${ix===0?"disabled":""}>←</button>
+        <button data-podmove="${pod.id}" data-dir="1" ${ix===n-1?"disabled":""}>→</button>
+        <button data-podedit="${pod.id}">Edit this pod</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ---------- One pod, one screen ----------
+function renderPodEditor(m){
+  const s=structOf(m), pod=TMModel.podById(s,ui.podEdit);
+  const brands=config.brands.filter(b=>s.bpod[b.id]===pod.id);
+  const members=config.team.filter(p=>s.mpod[p.id]===pod.id);
+  const podName=id=>{const p=TMModel.podById(s,id);return p?p.name:"";};
+  return `
+  <div class="row between"><h1 style="font-size:22px">${esc(pod.name)}</h1>
+    <div class="row"><button id="donePod">← All pods</button>
+      ${ui.confirmDel===pod.id
+        ? `<button class="danger" data-poddelyes="${pod.id}">${brands.length||members.length?"Move out and delete":"Delete pod"}</button><button class="ghost" data-delno="1">Cancel</button>`
+        : `<button class="ghost danger" data-poddel="${pod.id}">Delete pod</button>`}</div></div>
+  ${ui.confirmDel===pod.id&&(brands.length||members.length)?`<p class="small" style="color:var(--mpi);margin:-8px 0 0">${brands.length} channel${brands.length===1?"":"s"} and ${members.length} ${members.length===1?"person":"people"} go back to "not in any pod". Nothing is deleted from Deliverables or Team &amp; Roles.</p>`:""}
+
+  <div class="card">
+    <h2>1 · This pod</h2>
+    <div class="flds">
+      <label for="pn">Name<input type="text" id="pn" data-podname="${pod.id}" value="${esc(pod.name)}"></label>
+      <label for="pt">Type<select id="pt" data-podtype="${pod.id}">${TMModel.POD_TYPES.map(t=>`<option ${pod.type===t?"selected":""}>${t}</option>`).join("")}</select></label>
+      <label for="pc">Colour<input type="color" id="pc" data-podcolor="${pod.id}" value="${esc(pod.color||"#2f6b4f")}" style="padding:2px;height:34px"></label>
+      <label for="pd">Description<input type="text" id="pd" data-poddesc="${pod.id}" value="${esc(pod.desc||"")}" placeholder="What this pod covers"></label>
+    </div>
+    ${pod.type==="floater"?`<p class="muted small" style="margin:10px 0 0">A floater pod supports the others: its people can work on and own channels in any pod.</p>`:""}
+  </div>
+
+  <div class="card">
+    <div class="row between"><h2>2 · Which channels are in this pod?</h2><span class="muted small">${brands.length} picked</span></div>
+    ${config.brands.length?`<div class="jobs" style="margin-top:10px">
+      ${config.brands.map(b=>{const where=s.bpod[b.id], here=where===pod.id;
+        return `<label for="pb-${b.id}" ${here?'style="border-color:var(--accent);background:var(--accent-soft)"':""}>
+          <input type="checkbox" id="pb-${b.id}" data-podbrand="${b.id}" ${here?"checked":""}>${esc(b.name)}${where&&!here?` <span class="muted" style="font-size:11px">(${esc(podName(where))})</span>`:""}</label>`;}).join("")}
+    </div>
+    <p class="muted small" style="margin:10px 0 0">Ticking one that sits in another pod moves it here. Add new channels in <a href="#plan">Deliverables → Plan</a>.</p>`
+      :`<div class="empty">No channels exist yet. <a href="#plan">Add brands in Deliverables → Plan</a> and they appear here.</div>`}
+  </div>
+
+  <div class="card">
+    <div class="row between"><h2>3 · Who is in this pod?</h2><span class="muted small">${members.length} picked</span></div>
+    ${config.team.length?`<div class="jobs" style="margin-top:10px">
+      ${config.team.map(p=>{const where=s.mpod[p.id], here=where===pod.id;
+        return `<label for="pp-${p.id}" ${here?'style="border-color:var(--accent);background:var(--accent-soft)"':""}>
+          <input type="checkbox" id="pp-${p.id}" data-podperson="${p.id}" ${here?"checked":""}>${esc(TMModel.displayNameOf(p))} <span class="muted" style="font-size:11px">${p.level==="Senior"?"SR":"JR"}${where&&!here?" · "+esc(podName(where)):""}</span></label>`;}).join("")}
+    </div>
+    <p class="muted small" style="margin:10px 0 0">Ticking someone who is in another pod moves them here. Add people in <a href="#team">Team &amp; Roles</a>.</p>`
+      :`<div class="empty">No people exist yet. <a href="#team">Add them in Team &amp; Roles</a> and they appear here.</div>`}
+  </div>
+
+  <div class="card">
+    <h2>4 · What does each person do here?</h2>
+    ${members.length?members.map(p=>`
+      <div class="line">
+        <div class="row between">
+          <div class="row"><b>${esc(TMModel.displayNameOf(p))}</b>
+            <select data-memfld="${p.id}" data-sf="level" aria-label="${esc(p.name)} seniority"><option ${p.level==="Junior"?"selected":""}>Junior</option><option ${p.level==="Senior"?"selected":""}>Senior</option></select>
+            <input type="number" class="cell num" data-memfld="${p.id}" data-sf="capacity" min="0" step="1" value="${p.capacity??""}" placeholder="capacity" aria-label="${esc(p.name)} monthly capacity" style="width:92px">
+          </div>
+          <span class="muted small">owns ${TMModel.brandsOwnedBy(s,p.id).length} · works on ${TMModel.brandsWorkedOn(s,p.id).length}</span>
+        </div>
+        <div class="jobs">${TMModel.ROLES.map(r=>`<label for="rl-${p.id}-${r.id}"><input type="checkbox" id="rl-${p.id}-${r.id}" data-role="${p.id}" value="${r.id}" ${TMModel.rolesOf(s,p.id).includes(r.id)?"checked":""}>${esc(r.label)}</label>`).join("")}</div>
+      </div>`).join("")
+      :`<div class="empty">Pick some people above first.</div>`}
+  </div>
+
+  <div class="card">
+    <h2>5 · Who runs each channel?</h2>
+    ${brands.length?brands.map(b=>{const o=s.own[b.id]||{}, crew=TMModel.peopleOnBrand(s,b.id), choices=ownerChoices(m,pod.id);
+      return `
+      <div class="line">
+        <div class="row between"><b>${esc(b.name)}</b><span class="muted small">${crew.length} ${crew.length===1?"person":"people"} on it</span></div>
+        ${choices.length?`
+        <div class="flds">
+          <label for="op-${b.id}">Owner<select id="op-${b.id}" data-owner="${b.id}" data-slot="p"><option value="">—</option>
+            ${choices.map(p=>`<option value="${p.id}" ${o.p===p.id?"selected":""}>${esc(TMModel.displayNameOf(p))}</option>`).join("")}</select></label>
+          <label for="ob-${b.id}">Backup<select id="ob-${b.id}" data-owner="${b.id}" data-slot="b"><option value="">—</option>
+            ${config.team.map(p=>`<option value="${p.id}" ${o.b===p.id?"selected":""}>${esc(TMModel.displayNameOf(p))}</option>`).join("")}</select></label>
+          <label for="oc-${b.id}">Owner time %<input type="number" id="oc-${b.id}" data-owner="${b.id}" data-slot="pct" min="0" max="100" step="5" value="${o.pct==null?TMModel.DEFAULT_OWNER_PCT:o.pct}"></label>
+        </div>
+        <div class="sublab">Who works on it</div>
+        <div class="jobs">${choices.map(p=>{const on=crew.includes(p.id), isOwner=o.p===p.id;
+          return `<label for="bt-${b.id}-${p.id}" ${isOwner?'style="border-color:var(--accent);background:var(--accent-soft)"':""}>
+            <input type="checkbox" id="bt-${b.id}-${p.id}" data-bteam="${b.id}" value="${p.id}" ${on?"checked":""} ${isOwner?"disabled":""}>${esc(TMModel.displayNameOf(p))}${isOwner?" (owner)":""}</label>`;}).join("")}</div>`
+        :`<p class="muted small" style="margin:8px 0 0">Pick some people in step 3 before setting an owner.</p>`}
+      </div>`;}).join("")
+      :`<div class="empty">Pick some channels above first.</div>`}
+  </div>
+
+  <div class="row between"><span class="muted small">Everything saves as you change it.</span><button class="primary" id="donePod2">Done — back to all pods</button></div>`;
+}
+
 function ownerLabel(m,bid){
   const o=TMModel.getOwnerForBrand(smonths,m,bid); if(!o)return "";
   const p=memberById(o.primary); return p?TMModel.displayNameOf(p):"";
 }
-// Everyone who may own a brand in this pod: that pod, plus any floater pod.
+// Everyone who may own or work on a channel in this pod: that pod, plus any floater pod.
 function ownerChoices(m,podId){
   const s=structOf(m);
   return config.team.filter(p=>{
@@ -965,227 +1131,8 @@ function ownerChoices(m,podId){
     return mp&&(mp===podId||TMModel.isFloaterPod(s,mp));
   });
 }
-const SKILLS=["video edit","design","motion","writing","shooting"];
-const PLATFORMS=["Instagram","YouTube","Facebook","Other"];
-const FORMATS=["reel","carousel","post","story","ad video","ad static","ad variant"];
 
-function renderPods(){
-  const m=ui.month, s=structOf(m), pods=TMModel.sortedPods(s), v=structIssues(m);
-  const unBrands=config.brands.filter(b=>!s.bpod[b.id]);
-  const unMembers=config.team.filter(p=>!s.mpod[p.id]);
-  const issueBox=(v.errors.length||v.warnings.length)?`
-    <div class="card" style="border-color:${v.errors.length?"var(--low)":"var(--mpi)"}">
-      <div class="row between"><h2>${v.errors.length?"Fix before this structure is usable":"Worth a look"}</h2>
-        <span class="small ${v.errors.length?"":"muted"}" style="${v.errors.length?"color:var(--low);font-weight:700":""}">${v.errors.length} error${v.errors.length===1?"":"s"} · ${v.warnings.length} warning${v.warnings.length===1?"":"s"}</span></div>
-      ${v.errors.map(e=>`<div class="issue"><span class="err">Error</span> ${esc(e.msg)}</div>`).join("")}
-      ${v.warnings.map(w=>`<div class="issue"><span class="warn">Warning</span> ${esc(w.msg)}</div>`).join("")}
-    </div>`:`<div class="card"><div class="row between"><h2>No problems found</h2><span class="small" style="color:var(--epi);font-weight:700">Ready to use</span></div></div>`;
-  return `
-  <div class="row between"><h1 style="font-size:22px">Structure · ${esc(monthLabel(m))}</h1>
-    <div class="row">${pods.length?"":`<button id="seedStruct">Load starting structure</button>`}<button id="copyPrevStruct">Copy from ${esc(monthLabel(shiftMonth(m,-1)))}</button><button class="primary" id="addPod">Add pod</button></div></div>
-  <p class="muted small" style="margin:-8px 0 0">Brands come from <a href="#plan">Deliverables → Plan</a> and people from <a href="#team">Team &amp; Roles</a> — the same lists, not copies. Anything you add here shows up there too.</p>
-  ${issueBox}
-  <div class="card">
-    <div class="flds" style="margin-top:0">
-      <label for="stMgr">Manager<input type="text" id="stMgr" data-stmeta="manager" value="${esc(s.meta.manager||"")}" placeholder="Name"></label>
-      <label for="stLead">Team lead<select id="stLead" data-stmeta="lead"><option value="">—</option>
-        ${config.team.map(p=>`<option value="${p.id}" ${s.meta.lead===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select></label>
-    </div>
-  </div>
-  <div class="podgrid">
-    ${pods.map((pod,ix)=>podCard(m,s,pod,ix,pods.length)).join("")}
-    <div class="pod" data-drop="">
-      <div class="head" style="background:var(--muted)"><span>Unassigned</span><span class="t">${unBrands.length} brands · ${unMembers.length} people</span></div>
-      <div class="body">
-        <div class="sublab" style="margin-top:0">Brands</div>
-        <div class="chips">${unBrands.length?unBrands.map(b=>brandChip(m,b)).join(""):`<span class="muted small">All brands are in a pod.</span>`}</div>
-        <form id="newBrandS" class="row" style="margin-top:8px"><input type="text" id="nbName" placeholder="New brand" required style="flex:1;min-width:110px" aria-label="New brand name"><button type="submit">Add</button></form>
-        <div class="sublab">People</div>
-        ${unMembers.length?unMembers.map(p=>memberCard(m,s,p)).join(""):`<p class="muted small" style="margin:6px 0 0">Everyone is in a pod.</p>`}
-        <form id="newMemberS" class="row" style="margin-top:8px"><input type="text" id="nmName" placeholder="New person" required style="flex:1;min-width:110px" aria-label="New person name">
-          <select id="nmLevel" aria-label="Seniority"><option>Junior</option><option>Senior</option></select><button type="submit">Add</button></form>
-      </div>
-    </div>
-  </div>
-  ${detailPanel(m,s)}`;
-}
-
-function podCard(m,s,pod,ix,n){
-  const brands=config.brands.filter(b=>s.bpod[b.id]===pod.id);
-  const members=config.team.filter(p=>s.mpod[p.id]===pod.id);
-  const editing=ui.podEdit===pod.id;
-  const free=config.brands.filter(b=>!s.bpod[b.id]), freeP=config.team.filter(p=>!s.mpod[p.id]);
-  return `
-  <div class="pod" data-drop="${pod.id}">
-    <div class="head" style="background:${esc(pod.color||"#2f6b4f")}">
-      <span>${esc(pod.name)} <span class="t">${esc(pod.type)}</span></span>
-      <button data-podedit="${pod.id}">${editing?"Done":"Edit"}</button>
-    </div>
-    <div class="body">
-      ${editing?`
-      <div class="flds" style="margin-top:0">
-        <label for="pn-${pod.id}">Name<input type="text" id="pn-${pod.id}" data-podname="${pod.id}" value="${esc(pod.name)}"></label>
-        <label for="pt-${pod.id}">Type<select id="pt-${pod.id}" data-podtype="${pod.id}">${TMModel.POD_TYPES.map(t=>`<option ${pod.type===t?"selected":""}>${t}</option>`).join("")}</select></label>
-        <label for="pc-${pod.id}">Colour<input type="color" id="pc-${pod.id}" data-podcolor="${pod.id}" value="${esc(pod.color||"#2f6b4f")}" style="padding:2px;height:34px"></label>
-      </div>
-      <label class="small muted" for="pd-${pod.id}" style="display:grid;gap:4px;margin-top:10px;font-weight:600">Description<input type="text" id="pd-${pod.id}" data-poddesc="${pod.id}" value="${esc(pod.desc||"")}" placeholder="What this pod covers"></label>
-      <div class="row" style="margin-top:10px">
-        <button data-podmove="${pod.id}" data-dir="-1" ${ix===0?"disabled":""}>← Move</button>
-        <button data-podmove="${pod.id}" data-dir="1" ${ix===n-1?"disabled":""}>Move →</button>
-        ${ui.confirmDel===pod.id
-          ? `<button class="danger" data-poddelyes="${pod.id}">${brands.length||members.length?"Move out &amp; delete":"Delete"}</button><button class="ghost" data-delno="1">Cancel</button>`
-          : `<button class="ghost danger" data-poddel="${pod.id}">Delete pod</button>`}
-      </div>
-      ${ui.confirmDel===pod.id&&(brands.length||members.length)?`<p class="small" style="color:var(--mpi);margin:8px 0 0">${brands.length} brand${brands.length===1?"":"s"} and ${members.length} ${members.length===1?"person":"people"} will move to Unassigned.</p>`:""}
-      <hr style="border:none;border-top:1px solid var(--line);margin:12px 0">`:""}
-      <div class="sublab" style="margin-top:0">Brands</div>
-      <div class="chips">${brands.length?brands.map(b=>brandChip(m,b)).join(""):`<span class="muted small">Drag a brand here.</span>`}</div>
-      ${free.length?`<select data-addbrand="${pod.id}" aria-label="Add a brand to ${esc(pod.name)}" style="margin-top:8px;width:100%"><option value="">+ Add brand…</option>${free.map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join("")}</select>`:""}
-      <div class="sublab">People</div>
-      ${members.length?members.map(p=>memberCard(m,s,p)).join(""):`<p class="muted small" style="margin:6px 0 0">Drag a person here.</p>`}
-      ${freeP.length?`<select data-addmember="${pod.id}" aria-label="Add a person to ${esc(pod.name)}" style="margin-top:8px;width:100%"><option value="">+ Add person…</option>${freeP.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>`:""}
-    </div>
-  </div>`;
-}
-
-function brandChip(m,b){
-  const s=structOf(m), own=ownerLabel(m,b.id), crew=TMModel.peopleOnBrand(s,b.id);
-  const sel=ui.structSel&&ui.structSel.t==="brand"&&ui.structSel.id===b.id;
-  const extra=crew.length-(own?1:0);
-  const tail=own?`${esc(own)}${extra>0?" +"+extra:""}`:(crew.length?`${crew.length} on it`:"no owner");
-  return `<span class="chip ${sel?"sel":""}" data-drag="brand:${b.id}" data-pick="brand:${b.id}" title="${esc(b.name)} · ${crew.length} ${crew.length===1?"person":"people"}${own?" · owner "+esc(own):""}">${esc(b.name)}<span class="own" ${own?"":'style="color:var(--low)"'}>${tail}</span></span>`;
-}
-function memberCard(m,s,p){
-  const roles=TMModel.rolesOf(s,p.id), sel=ui.structSel&&ui.structSel.t==="member"&&ui.structSel.id===p.id;
-  const owned=TMModel.brandsOwnedBy(s,p.id).length;
-  return `<div class="mcard ${sel?"sel":""}" data-drag="member:${p.id}" data-pick="member:${p.id}">
-    <span><b>${esc(TMModel.displayNameOf(p))}</b>${owned?` <span class="muted">· ${owned} brand${owned===1?"":"s"}</span>`:""}</span>
-    <span class="row" style="gap:4px"><span class="rtag ${p.level==="Senior"?"sr":""}">${p.level==="Senior"?"SR":"JR"}</span>
-    ${roles.map(r=>`<span class="rtag">${esc((TMModel.ROLES.find(x=>x.id===r)||{label:r}).label)}</span>`).join("")}</span>
-  </div>`;
-}
-
-function detailPanel(m,s){
-  const sel=ui.structSel; if(!sel)return `<div class="card"><p class="muted small" style="margin:0">Click a brand chip or a person to set owners, roles and capacity. Drag them between pods to move them.</p></div>`;
-  if(sel.t==="brand"){
-    const b=brandById(sel.id); if(!b)return "";
-    const podId=s.bpod[b.id], pod=TMModel.podById(s,podId);
-    const o=s.own[b.id]||{}, choices=ownerChoices(m,podId);
-    return `
-    <div class="card">
-      <div class="row between"><h2>${esc(b.name)}</h2><span class="muted small">${pod?esc(pod.name):"Unassigned"} · <button class="linkbtn" id="clearSel">close</button></span></div>
-      ${podId?"":`<p class="small" style="color:var(--mpi);margin:8px 0 0">Put this brand in a pod before picking an owner.</p>`}
-      <div class="flds">
-        <label for="bo-p">Primary owner<select id="bo-p" data-owner="${b.id}" data-slot="p" ${podId?"":"disabled"}><option value="">—</option>
-          ${choices.map(p=>`<option value="${p.id}" ${o.p===p.id?"selected":""}>${esc(TMModel.displayNameOf(p))}</option>`).join("")}</select></label>
-        <label for="bo-b">Backup owner<select id="bo-b" data-owner="${b.id}" data-slot="b" ${podId?"":"disabled"}><option value="">—</option>
-          ${config.team.map(p=>`<option value="${p.id}" ${o.b===p.id?"selected":""}>${esc(TMModel.displayNameOf(p))}</option>`).join("")}</select></label>
-        <label for="bo-pct">Owner time %<input type="number" id="bo-pct" data-owner="${b.id}" data-slot="pct" min="0" max="100" step="5" value="${o.pct==null?TMModel.DEFAULT_OWNER_PCT:o.pct}"></label>
-        <label for="bk">Kind<select id="bk" data-brandfld="${b.id}" data-sf="kind"><option value="organic" ${b.kind!=="ads"?"selected":""}>Organic channel</option><option value="ads" ${b.kind==="ads"?"selected":""}>Ad brand</option></select></label>
-      </div>
-      <div class="sublab">Who works on this channel</div>
-      ${podId?(choices.length?`<div class="jobs">${choices.map(p=>{const on=TMModel.peopleOnBrand(s,b.id).includes(p.id),isOwner=o.p===p.id;
-        return `<label for="bt-${p.id}" ${isOwner?'style="border-color:var(--accent);background:var(--accent-soft)"':""}><input type="checkbox" id="bt-${p.id}" data-bteam="${b.id}" value="${p.id}" ${on?"checked":""} ${isOwner?"disabled":""}>${esc(TMModel.displayNameOf(p))}${isOwner?" (owner)":""}</label>`;}).join("")}</div>
-        <p class="muted small" style="margin:8px 0 0">${TMModel.peopleOnBrand(s,b.id).length} on this channel. Only people in ${esc(pod.name)} and floaters can be picked — drag someone into the pod first to add them here.</p>`
-        :`<p class="muted small" style="margin:6px 0 0">${esc(pod.name)} has nobody in it yet.</p>`)
-        :`<p class="muted small" style="margin:6px 0 0">Put the brand in a pod first.</p>`}
-      <div class="sublab">Platforms</div>
-      <div class="jobs">${PLATFORMS.map(x=>`<label for="pf-${esc(x)}"><input type="checkbox" id="pf-${esc(x)}" data-blist="${b.id}" data-sf="platforms" value="${esc(x)}" ${(b.platforms||[]).includes(x)?"checked":""}>${esc(x)}</label>`).join("")}</div>
-      <div class="sublab">Content formats</div>
-      <div class="jobs">${FORMATS.map(x=>`<label for="fm-${esc(x).replace(/ /g,"-")}"><input type="checkbox" id="fm-${esc(x).replace(/ /g,"-")}" data-blist="${b.id}" data-sf="formats" value="${esc(x)}" ${(b.formats||[]).includes(x)?"checked":""}>${esc(x)}</label>`).join("")}</div>
-      <label class="small muted" for="bn" style="display:grid;gap:4px;margin-top:12px;font-weight:600">Notes<input type="text" id="bn" data-brandfld="${b.id}" data-sf="notes" value="${esc(b.notes||"")}" placeholder="Anything worth remembering"></label>
-    </div>`;
-  }
-  const p=memberById(sel.id); if(!p)return "";
-  const roles=TMModel.rolesOf(s,p.id), owned=TMModel.brandsOwnedBy(s,p.id);
-  const pod=TMModel.podById(s,s.mpod[p.id]);
-  return `
-  <div class="card">
-    <div class="row between"><h2>${esc(p.name)}</h2><span class="muted small">${pod?esc(pod.name):"Unassigned"} · <button class="linkbtn" id="clearSel">close</button></span></div>
-    <div class="flds">
-      <label for="md">Display name<input type="text" id="md" data-memfld="${p.id}" data-sf="display" value="${esc(p.display||"")}" placeholder="${esc(p.name)}"></label>
-      <label for="ml">Seniority<select id="ml" data-memfld="${p.id}" data-sf="level"><option ${p.level==="Junior"?"selected":""}>Junior</option><option ${p.level==="Senior"?"selected":""}>Senior</option></select></label>
-      <label for="mc">Monthly capacity (points)<input type="number" id="mc" data-memfld="${p.id}" data-sf="capacity" min="0" step="1" value="${p.capacity??""}" placeholder="e.g. 100"></label>
-      <label for="ma">Active<select id="ma" data-memfld="${p.id}" data-sf="active"><option value="1" ${p.active!==false?"selected":""}>Active</option><option value="0" ${p.active===false?"selected":""}>Inactive</option></select></label>
-    </div>
-    <div class="sublab">Roles in pod</div>
-    <div class="jobs">${TMModel.ROLES.map(r=>`<label for="rl-${r.id}"><input type="checkbox" id="rl-${r.id}" data-role="${p.id}" value="${r.id}" ${roles.includes(r.id)?"checked":""}>${esc(r.label)}</label>`).join("")}</div>
-    <div class="sublab">Skills</div>
-    <div class="jobs">${SKILLS.map(x=>`<label for="sk-${esc(x).replace(/ /g,"-")}"><input type="checkbox" id="sk-${esc(x).replace(/ /g,"-")}" data-mlist="${p.id}" data-sf="skills" value="${esc(x)}" ${(p.skills||[]).includes(x)?"checked":""}>${esc(x)}</label>`).join("")}</div>
-    <div class="sublab">Owns</div>
-    ${owned.length?`<div class="chips">${owned.map(bid=>{const b=brandById(bid);return b?`<span class="chip" data-pick="brand:${bid}">${esc(b.name)}</span>`:"";}).join("")}</div>`
-      :`<p class="muted small" style="margin:6px 0 0">No brands.</p>`}
-    <div class="sublab">Works on</div>
-    ${(()=>{const w=TMModel.brandsWorkedOn(s,p.id).filter(b=>!owned.includes(b));
-      return w.length?`<div class="chips">${w.map(bid=>{const b=brandById(bid);return b?`<span class="chip" data-pick="brand:${bid}">${esc(b.name)}</span>`:"";}).join("")}</div>`
-        :`<p class="muted small" style="margin:6px 0 0">${owned.length?"Only the channels above.":"No channels yet — open a channel and tick them on it."}</p>`;})()}
-    <p class="muted small" style="margin:12px 0 0">Editing capacity after owner time: <b>${TMModel.editingCapacity(p,s)}</b>${p.capacity?` of ${p.capacity}`:" — set a capacity above"} · planned this month: <b>${piecesFor(m,p.id)}</b> pieces</p>
-  </div>`;
-}
-
-// ---------- Structure: starting data ----------
-// Matches brands and people by name first, so running this on a sheet that already has
-// them reuses what is there instead of creating a second "Doctor Farmer".
-const SEED=[
-  {pod:"Pod A",type:"organic",brands:["Doctor Farmer","My Health Summit","MHS Diabetes"],
-   members:[{name:"Basha",level:"Senior",roles:["lead","owner"],owns:["My Health Summit"],backup:"Kamesh"},
-            {name:"Kamesh",level:"Senior",roles:["owner"],owns:["Doctor Farmer","MHS Diabetes"],backup:"Basha"},
-            {name:"Rahul Ravichandran",level:"Junior",display:"Rahul R",roles:["editor"]}]},
-  {pod:"Pod B",type:"organic",brands:["My Health School","Longer Life"],
-   members:[{name:"Varadharaj",level:"Senior",roles:["lead","owner"],owns:["My Health School","Longer Life"],backup:"Ashwin"},
-            {name:"Sasil Vikram",level:"Junior",roles:["editor"]},
-            {name:"Micheal",level:"Junior",roles:["editor"]}]},
-  {pod:"Pod C",type:"ads",brands:["VSL","MHS","Scalex"],kind:"ads",
-   members:[{name:"Muthukrishnan",level:"Senior",roles:["lead","owner"],owns:["VSL","MHS","Scalex"],backup:"Ashwin"},
-            {name:"Rahul",level:"Junior",display:"Rahul",roles:["editor"]},
-            {name:"Ragul B",level:"Junior",display:"Ragul B",roles:["editor"]}]},
-  {pod:"Floater",type:"floater",brands:[],
-   members:[{name:"Ashwin",level:"Senior",roles:["qc","floater"]}]}
-];
-function findOrAddBrand(name,kind){
-  const hit=config.brands.find(b=>b.name.trim().toLowerCase()===name.trim().toLowerCase());
-  if(hit){ if(kind&&!hit.kind)hit.kind=kind; return hit; }
-  const b={id:uid("b"),name,items:[],kind:kind||"organic",platforms:[],formats:[],notes:"",active:true};
-  config.brands.push(b); return b;
-}
-function findOrAddMember(spec){
-  const hit=config.team.find(p=>p.name.trim().toLowerCase()===spec.name.trim().toLowerCase());
-  if(hit){ if(spec.display&&!hit.display)hit.display=spec.display; return hit; }
-  const p={id:uid("p"),name:spec.name,level:spec.level,jobs:[],display:spec.display||"",skills:[],capacity:"",active:true};
-  config.team.push(p); return p;
-}
-async function seedStructure(m){
-  const s=structOf(m);
-  const byName={}, podOf={};
-  SEED.forEach((blk,ix)=>{
-    const pod={id:uid("pod"),name:blk.pod,type:blk.type,color:POD_COLORS[ix%POD_COLORS.length],sort:ix+1,desc:""};
-    s.pods.push(pod);
-    blk.brands.forEach(bn=>{const b=findOrAddBrand(bn,blk.kind);byName[bn]=b;s.bpod[b.id]=pod.id;});
-    blk.members.forEach(mem=>{const p=findOrAddMember(mem);podOf[mem.name]=p;s.mpod[p.id]=pod.id;
-      if(mem.roles&&mem.roles.length)s.roles[p.id]=mem.roles.slice();});
-  });
-  // owners need every member to exist, so they are set in a second pass
-  SEED.forEach(blk=>blk.members.forEach(mem=>{
-    (mem.owns||[]).forEach(bn=>{
-      const b=byName[bn], owner=podOf[mem.name], backup=mem.backup?podOf[mem.backup]:null;
-      if(b&&owner)s.own[b.id]={p:owner.id,b:backup?backup.id:"",pct:TMModel.DEFAULT_OWNER_PCT};
-    });
-  }));
-  // a channel starts with its owner plus the pod's editors; change it per channel afterwards
-  SEED.forEach(blk=>{
-    const editors=blk.members.filter(mm=>(mm.roles||[]).includes("editor")).map(mm=>podOf[mm.name]).filter(Boolean);
-    blk.brands.forEach(bn=>{
-      const b=byName[bn]; if(!b)return;
-      const o=s.own[b.id];
-      const crew=[...new Set([...(o&&o.p?[o.p]:[]),...editors.map(p=>p.id)])];
-      if(crew.length)s.bteam[b.id]=crew;
-    });
-  });
-  render(); await saveConfig(); await saveStruct(m);
-  toast("Starting structure loaded — edit it however you like");
-}
-
-// Drag and drop between pods. Re-attached after every render.
+// Drag and drop on the pod list. Re-attached after every render.
 function wireDnD(){
   const v=view();
   v.querySelectorAll("[data-drag]").forEach(el=>{
@@ -1209,11 +1156,11 @@ async function moveToPod(kind,id,podId){
   if(kind==="brand"){
     if(s.bpod[id]===podId)return;
     if(podId)s.bpod[id]=podId; else delete s.bpod[id];
-    const b=brandById(id); toast(`${b?b.name:"Brand"} → ${podId?(TMModel.podById(s,podId)||{}).name:"Unassigned"}`);
+    const b=brandById(id); toast(`${b?b.name:"Channel"} → ${podId?(TMModel.podById(s,podId)||{}).name:"not in any pod"}`);
   }else{
     if(s.mpod[id]===podId)return;
     if(podId)s.mpod[id]=podId; else delete s.mpod[id];
-    const p=memberById(id); toast(`${p?TMModel.displayNameOf(p):"Person"} → ${podId?(TMModel.podById(s,podId)||{}).name:"Unassigned"}`);
+    const p=memberById(id); toast(`${p?TMModel.displayNameOf(p):"Person"} → ${podId?(TMModel.podById(s,podId)||{}).name:"not in any pod"}`);
   }
   pruneStructure(s);
   render(); await saveStruct(m);
@@ -1229,13 +1176,7 @@ document.getElementById("seg").addEventListener("click",e=>{
 document.getElementById("month").addEventListener("change",e=>{if(e.target.value){ui.month=e.target.value;render();}});
 
 view().addEventListener("click",async e=>{
-  const t=e.target.closest("button");
-  // Brand chips and member cards are not buttons (they have to be draggable), so they
-  // are picked up before the button-only path below.
-  const pickEl=!t&&e.target.closest("[data-pick]");
-  if(pickEl){const ix=pickEl.dataset.pick.indexOf(":");ui.structSel={t:pickEl.dataset.pick.slice(0,ix),id:pickEl.dataset.pick.slice(ix+1)};render();
-    document.querySelector("#view > .card:last-child")?.scrollIntoView({block:"nearest"});return;}
-  if(!t)return;
+  const t=e.target.closest("button"); if(!t)return;
   if(t.dataset.dash){ui.dashPerson=t.dataset.dash;render();document.getElementById("dashPerson")?.scrollIntoView({block:"center"});return;}
   if(t.dataset.ep){ui.entryPerson=t.dataset.ep;render();return;}
   if(t.dataset.brand){ui.brandSel=t.dataset.brand;ui.confirmDel=null;render();return;}
@@ -1280,14 +1221,15 @@ view().addEventListener("click",async e=>{
   }
   if(t.id==="exportAllocCsv"){await exportAllocCSV();return;}
   // ---- structure ----
-  if(t.id==="clearSel"){ui.structSel=null;render();return;}
-  if(t.id==="seedStruct"){await seedStructure(ui.month);return;}
   if(t.id==="addPod"){
     const m=ui.month,s=structOf(m),n=s.pods.length;
-    s.pods.push({id:uid("pod"),name:"Pod "+String.fromCharCode(65+n),type:n&&!s.pods.some(p=>p.type==="ads")?"ads":"organic",
-      color:POD_COLORS[n%POD_COLORS.length],sort:n+1,desc:""});
-    ui.podEdit=s.pods[s.pods.length-1].id;render();await saveStruct(m);toast("Pod added");return;}
-  if(t.dataset.podedit){ui.podEdit=ui.podEdit===t.dataset.podedit?null:t.dataset.podedit;ui.confirmDel=null;render();return;}
+    const pod={id:uid("pod"),name:"Pod "+String.fromCharCode(65+n),type:"organic",color:POD_COLORS[n%POD_COLORS.length],sort:n+1,desc:""};
+    s.pods.push(pod);
+    ui.podEdit=pod.id;ui.confirmDel=null;render();
+    document.getElementById("pn")?.select();
+    await saveStruct(m);return;}
+  if(t.dataset.podedit){ui.podEdit=t.dataset.podedit;ui.confirmDel=null;render();window.scrollTo({top:0});return;}
+  if(t.id==="donePod"||t.id==="donePod2"){ui.podEdit=null;ui.confirmDel=null;render();window.scrollTo({top:0});return;}
   if(t.dataset.podmove){
     const m=ui.month,s=structOf(m),list=TMModel.sortedPods(s),i=list.findIndex(p=>p.id===t.dataset.podmove),j=i+ +t.dataset.dir;
     if(i<0||j<0||j>=list.length)return;
@@ -1300,11 +1242,11 @@ view().addEventListener("click",async e=>{
     Object.keys(s.bpod).forEach(b=>{if(s.bpod[b]===id)delete s.bpod[b];});
     Object.keys(s.mpod).forEach(p=>{if(s.mpod[p]===id)delete s.mpod[p];});
     s.pods=s.pods.filter(p=>p.id!==id);
-    ui.confirmDel=null;ui.podEdit=null;render();await saveStruct(m);toast("Pod deleted — its brands and people are in Unassigned");return;}
+    ui.confirmDel=null;ui.podEdit=null;render();await saveStruct(m);toast("Pod deleted — its channels and people are back in the list");return;}
   if(t.id==="copyPrevStruct"){
     const m=ui.month,pm=shiftMonth(m,-1),prev=smonths[pm];
     if(!prev||!(prev.pods||[]).length){toast("No structure in "+monthLabel(pm)+".");return;}
-    smonths[m]=plain(prev);ui.podEdit=null;ui.structSel=null;
+    smonths[m]=plain(prev);ui.podEdit=null;
     render();await saveStruct(m);toast("Copied the "+monthLabel(pm)+" structure");return;}
   if(t.dataset.bdel||t.dataset.idel){ui.confirmDel=t.dataset.bdel||t.dataset.idel;render();return;}
   if(t.dataset.bdelyes){config.brands=config.brands.filter(x=>x.id!==t.dataset.bdelyes);ui.confirmDel=null;ui.brandSel=null;render();await saveConfig();toast("Brand removed");return;}
@@ -1379,8 +1321,8 @@ view().addEventListener("change",async e=>{
     if(t.dataset.podcolor)pod.color=t.value;
     if(t.dataset.poddesc)pod.desc=t.value;
     render();await saveStruct(m);return;}
-  if(t.dataset.addbrand){if(!t.value)return;await moveToPod("brand",t.value,t.dataset.addbrand);return;}
-  if(t.dataset.addmember){if(!t.value)return;await moveToPod("member",t.value,t.dataset.addmember);return;}
+  if(t.dataset.podbrand){await moveToPod("brand",t.dataset.podbrand,t.checked?ui.podEdit:"");return;}
+  if(t.dataset.podperson){await moveToPod("member",t.dataset.podperson,t.checked?ui.podEdit:"");return;}
   if(t.dataset.owner){
     const m=ui.month,s=structOf(m),bid=t.dataset.owner;
     const o=s.own[bid]||{p:"",b:"",pct:TMModel.DEFAULT_OWNER_PCT};
@@ -1393,14 +1335,9 @@ view().addEventListener("change",async e=>{
     s.bteam[bid]=t.checked?[...new Set([...cur,t.value])]:cur.filter(x=>x!==t.value);
     if(!s.bteam[bid].length)delete s.bteam[bid];
     render();await saveStruct(m);return;}
-  if(t.dataset.brandfld){const b=brandById(t.dataset.brandfld);if(b){b[t.dataset.sf]=t.value;render();await saveConfig();}return;}
-  if(t.dataset.blist){const b=brandById(t.dataset.blist);if(b){const f=t.dataset.sf,cur=b[f]||[];
-    b[f]=t.checked?[...new Set([...cur,t.value])]:cur.filter(x=>x!==t.value);await saveConfig();}return;}
   if(t.dataset.memfld){const p=memberById(t.dataset.memfld);if(p){const f=t.dataset.sf;
-    p[f]=f==="active"?t.value==="1":(f==="capacity"?(t.value===""?"":+t.value):t.value);
+    p[f]=f==="capacity"?(t.value===""?"":+t.value):t.value;
     render();await saveConfig();}return;}
-  if(t.dataset.mlist){const p=memberById(t.dataset.mlist);if(p){const f=t.dataset.sf,cur=p[f]||[];
-    p[f]=t.checked?[...new Set([...cur,t.value])]:cur.filter(x=>x!==t.value);await saveConfig();}return;}
   if(t.dataset.role){
     const m=ui.month,s=structOf(m),pid=t.dataset.role,cur=TMModel.rolesOf(s,pid);
     s.roles[pid]=t.checked?[...new Set([...cur,t.value])]:cur.filter(x=>x!==t.value);
@@ -1450,12 +1387,6 @@ view().addEventListener("submit",async e=>{
     if(hasQty&&ui.bdrafts[k])ui.bdrafts[k].d[it.id]=+qty;
     render();await saveConfig();
     toast(hasQty?name+" added. Press Save to keep the quantity.":name+" added");}
-  if(e.target.id==="newBrandS"){const name=document.getElementById("nbName").value.trim();if(!name)return;
-    const b={id:uid("b"),name,items:[],kind:"organic",platforms:[],formats:[],notes:"",active:true};
-    config.brands.push(b);ui.structSel={t:"brand",id:b.id};render();await saveConfig();toast(name+" added");}
-  if(e.target.id==="newMemberS"){const name=document.getElementById("nmName").value.trim();if(!name)return;
-    const p={id:uid("p"),name,level:document.getElementById("nmLevel").value,jobs:[],display:"",skills:[],capacity:"",active:true};
-    config.team.push(p);ui.structSel={t:"member",id:p.id};render();await saveConfig();toast(name+" added");}
 });
 
 // ---------- Downloads ----------

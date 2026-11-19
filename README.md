@@ -42,12 +42,23 @@ The team list comes from Team & Roles and the quantities from the Deliverables p
 
 How the team is organised, one structure per month — the month picker is the structure selector, so November's pods stay November's however you rearrange December.
 
-- **Builder** — pods as colour-headed cards. Drag brand chips and people between pods, or pick them from the "+ Add" selects. Add, rename, recolour, retype, reorder and delete pods (deleting one moves its brands and people to Unassigned). **Load starting structure** fills in the pods from the agency's current setup, matching brands and people by name so nothing is duplicated.
-- **Click a channel** to decide who works on it: tick any of its pod's people (floaters from any pod are available too), then pick the primary and backup owner and the owner's time percent. The owner is always on the channel and cannot be unticked. The chip then reads `Doctor Farmer · Kamesh +1`.
-- **Click a person** to set display name, seniority, capacity, skills and their roles in the pod, and to see the channels they own and the channels they merely work on.
-- **Checks** run live at the top. *Errors* — a brand with no primary owner, an owner or a crew member outside the brand's pod (floaters excepted), duplicate display names. *Warnings* — a pod with no lead or no senior, someone in no pod, a channel with nobody or with only one person, a senior owning more than three brands, and a pod planned past its editing capacity (capacity × (1 − owner time), measured against the pieces the Allocation section has given its members).
+Two screens, nothing else.
 
-Pods, channels, people and roles are all decided in the UI — nothing is hard-coded. Brands come from Deliverables → Plan and people from Team & Roles: the same lists, never copies. Moving a brand or a person between pods drops anyone who no longer belongs on that pod's channels, so the structure cannot drift into a state the checks would reject.
+**The pod list** — every pod as a read-only card: its channels with their owner, its people with their roles. Reorder with ← →, add one with **New pod**, and anything not yet placed sits in a "Not in any pod" card (drag from there onto a pod if you prefer). Checks run above the list.
+
+**Press Edit on a pod** and that pod opens on its own screen, in five steps:
+
+1. **This pod** — name, type (organic / ads / floater), colour, description.
+2. **Which channels are in this pod?** — tick them from the brands in Deliverables → Plan. Ticking one that sits in another pod moves it.
+3. **Who is in this pod?** — tick them from the people in Team & Roles. Same rule.
+4. **What does each person do here?** — seniority, monthly capacity, and their roles in this pod (pod lead, channel owner, editor, QC, floater).
+5. **Who runs each channel?** — per channel, the owner, the backup, the owner's time percent, and tick everyone else who works on it. The owner is always on the channel and cannot be unticked. Floaters from any pod are offered everywhere.
+
+Everything saves as you change it. Nothing is pre-filled and nothing is hard-coded: the channels are whatever is in Deliverables, the people are whatever is in Team & Roles, and every pairing is yours to pick.
+
+**Checks** — *errors*: a channel with no owner, an owner or crew member outside the channel's pod (floaters excepted), duplicate display names. *Warnings*: a pod with no lead or no senior, someone in no pod, a channel with nobody or with only one person, a senior owning more than three channels, and a pod planned past its editing capacity (capacity × (1 − owner time), measured against the pieces Allocation has given its members).
+
+Moving a channel or a person between pods drops anyone who no longer belongs, so the structure cannot drift into a state the checks would reject. Channels parked outside every pod keep their setup until they are placed again.
 
 ### Running the tests
 

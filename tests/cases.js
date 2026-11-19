@@ -49,6 +49,7 @@
           { id: "pf", name: "Floater", type: "floater", color: "#5d6b62", sort: 9 }
         ],
         bpod: { b1: "p1", b2: "p1", b3: "p2", b4: "p2" },
+        bteam: { b1: ["m2", "m3"], b2: ["m1", "m3"], b3: ["m4"], b4: ["m4", "m5"] },
         mpod: { m1: "p1", m2: "p1", m3: "p1", m4: "p2", m5: "pf" },
         roles: { m1: ["lead", "owner"], m2: ["owner"], m3: ["editor"], m4: ["lead", "owner"], m5: ["qc", "floater"] },
         own: {
@@ -90,6 +91,47 @@
     });
     check("sortedPods honours sort_order", function () {
       eq(M.sortedPods(struct()).map(function (p) { return p.name; }), ["Pod A", "Pod B", "Floater"], "order");
+    });
+
+    // ---- who works on a channel ----
+    check("peopleOnBrand lists the crew", function () {
+      eq(M.peopleOnBrand(struct(), "b1").sort(), ["m2", "m3"], "crew");
+    });
+    check("peopleOnBrand counts the owner even when they are not listed", function () {
+      var s = struct(); s.bteam.b1 = ["m3"];
+      eq(M.peopleOnBrand(s, "b1").sort(), ["m2", "m3"], "crew with owner added");
+    });
+    check("peopleOnBrand falls back to the owner alone", function () {
+      var s = struct(); delete s.bteam.b1;
+      eq(M.peopleOnBrand(s, "b1"), ["m2"], "crew");
+    });
+    check("getBrandTeam reads through the month", function () {
+      eq(M.getBrandTeam(smonths, "2026-11", "b4").sort(), ["m4", "m5"], "crew");
+    });
+    check("brandsWorkedOn covers channels a person does not own", function () {
+      eq(M.brandsWorkedOn(struct(), "m3").sort(), ["b1", "b2"], "Rahul R works on two channels, owns none");
+      eq(M.brandsOwnedBy(struct(), "m3"), [], "and owns nothing");
+    });
+    check("error when someone on a channel is outside its pod", function () {
+      var s = struct(); s.bteam.b1 = ["m2", "m4"]; // m4 is Pod B
+      has(M.validate({ struct: s, brands: brands, team: team }).errors, "worker-outside-pod", "errors");
+    });
+    check("a floater may work on any channel", function () {
+      var s = struct(); s.bteam.b1 = ["m2", "m5"]; // m5 is the floater
+      lacks(M.validate({ struct: s, brands: brands, team: team }).errors, "worker-outside-pod", "errors");
+    });
+    check("warning when a channel has nobody on it", function () {
+      var s = struct(); s.bteam.b1 = []; delete s.own.b1;
+      has(M.validate({ struct: s, brands: brands, team: team }).warnings, "channel-no-people", "warnings");
+    });
+    check("warning when a channel rests on one person", function () {
+      has(M.validate({ struct: struct(), brands: brands, team: team }).warnings, "channel-one-person", "warnings");
+    });
+    check("no cover warning once a channel has two people", function () {
+      var s = struct(); s.bteam.b3 = ["m4", "m5"];
+      var w = M.validate({ struct: s, brands: brands, team: team }).warnings
+        .filter(function (x) { return x.code === "channel-one-person"; });
+      eq(w.length, 0, "one-person warnings");
     });
 
     // ---- capacity ----

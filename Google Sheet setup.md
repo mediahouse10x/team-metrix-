@@ -51,6 +51,7 @@ Script-ஏ tab-களை உருவாக்கிக்கும்.
 |---|---|
 | `Pods` | month, id, name, type, color, sortOrder, description |
 | `PodBrands` | month, brandId, podId |
+| `BrandTeam` | month, brandId, personId (அந்த channel-ல வேலை செய்யறவங்க) |
 | `PodMembers` | month, personId, podId, roles |
 | `BrandOwners` | month, brandId, primaryId, backupId, ownerPct |
 | `StructMeta` | month, key, value |

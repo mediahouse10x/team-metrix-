@@ -25,6 +25,17 @@
  * Allocation (splits the plan across the team; writes only its own two tabs):
  *   AllocTags   brandId | itemId | ck (Key/Critical) | kind (count/resp)
  *   Alloc       month | brandId | itemId | personId | value
+ *
+ * Structure (one structure per month: pods, who is in them, who owns and works on what):
+ *   Pods         month | id | name | type | color | sortOrder | description
+ *   PodBrands    month | brandId | podId
+ *   BrandTeam    month | brandId | personId        (who works on that channel)
+ *   PodMembers   month | personId | podId | roles
+ *   BrandOwners  month | brandId | primaryId | backupId | ownerPct
+ *   StructMeta   month | key | value
+ *
+ * Brands and Team gained columns for this: a brand's kind/platforms/formats/notes/active,
+ * a person's displayName/skills/capacity/active. Old sheets pick them up automatically.
  * You can read them freely. Edits made by hand are picked up the next time the page
  * loads or you press "Reload from sheet" — but a save from the page rewrites the tab,
  * so prefer entering data in the page.
@@ -46,6 +57,7 @@ var HEAD = {
   // Structure side: one structure per month
   Pods:        ['month', 'id', 'name', 'type', 'color', 'sortOrder', 'description'],
   PodBrands:   ['month', 'brandId', 'podId'],
+  BrandTeam:   ['month', 'brandId', 'personId'],
   PodMembers:  ['month', 'personId', 'podId', 'roles'],
   BrandOwners: ['month', 'brandId', 'primaryId', 'backupId', 'ownerPct'],
   StructMeta:  ['month', 'key', 'value']
@@ -114,7 +126,8 @@ function tab(name) {
   if (s.getLastRow() === 0) {
     s.setFrozenRows(1);
     if (name === 'Entries' || name === 'Plan' || name === 'Alloc' || name === 'Pods' ||
-        name === 'PodBrands' || name === 'PodMembers' || name === 'BrandOwners' || name === 'StructMeta') {
+        name === 'PodBrands' || name === 'BrandTeam' || name === 'PodMembers' ||
+        name === 'BrandOwners' || name === 'StructMeta') {
       s.getRange('A:A').setNumberFormat('@'); // keep "2026-11" as text
     }
   }
@@ -235,7 +248,7 @@ function loadAll() {
   // ---- structure side: one structure per month ----
   var smonths = {};
   function struct(m) {
-    if (!smonths[m]) smonths[m] = { pods: [], bpod: {}, mpod: {}, roles: {}, own: {}, meta: { manager: '', lead: '' } };
+    if (!smonths[m]) smonths[m] = { pods: [], bpod: {}, bteam: {}, mpod: {}, roles: {}, own: {}, meta: { manager: '', lead: '' } };
     return smonths[m];
   }
   rowsOf('Pods').forEach(function (r) {
@@ -248,6 +261,13 @@ function loadAll() {
     var m = fmtMonth(r[0]), bid = String(r[1]).trim(), pid = String(r[2]).trim();
     if (!m || !bid || !pid) return;
     struct(m).bpod[bid] = pid;
+  });
+  rowsOf('BrandTeam').forEach(function (r) {
+    var m = fmtMonth(r[0]), bid = String(r[1]).trim(), person = String(r[2]).trim();
+    if (!m || !bid || !person) return;
+    var s = struct(m);
+    if (!s.bteam[bid]) s.bteam[bid] = [];
+    if (s.bteam[bid].indexOf(person) < 0) s.bteam[bid].push(person);
   });
   rowsOf('PodMembers').forEach(function (r) {
     var m = fmtMonth(r[0]), person = String(r[1]).trim(), pid = String(r[2]).trim();
@@ -387,8 +407,8 @@ function replaceMonth(name, month, rows) {
 
 function saveStruct(month, struct) {
   if (!month) throw new Error('No month given.');
-  var pods = struct.pods || [], bpod = struct.bpod || {}, mpod = struct.mpod || {},
-      roles = struct.roles || {}, own = struct.own || {}, meta = struct.meta || {};
+  var pods = struct.pods || [], bpod = struct.bpod || {}, bteam = struct.bteam || {},
+      mpod = struct.mpod || {}, roles = struct.roles || {}, own = struct.own || {}, meta = struct.meta || {};
 
   replaceMonth('Pods', month, pods.map(function (p) {
     return [month, String(p.id), String(p.name), String(p.type || 'organic'),
@@ -397,6 +417,12 @@ function saveStruct(month, struct) {
 
   replaceMonth('PodBrands', month, Object.keys(bpod).filter(function (b) { return bpod[b]; })
     .map(function (b) { return [month, String(b), String(bpod[b])]; }));
+
+  var crew = [];
+  Object.keys(bteam).forEach(function (bid) {
+    (bteam[bid] || []).forEach(function (p) { if (p) crew.push([month, String(bid), String(p)]); });
+  });
+  replaceMonth('BrandTeam', month, crew);
 
   replaceMonth('PodMembers', month, Object.keys(mpod).filter(function (p) { return mpod[p]; })
     .map(function (p) { return [month, String(p), String(mpod[p]), (roles[p] || []).join(',')]; }));
@@ -415,6 +441,6 @@ function saveStruct(month, struct) {
 
 function setup() {
   ['Jobs', 'Team', 'Settings', 'Entries', 'Brands', 'BrandItems', 'Plan', 'AllocTags', 'Alloc',
-   'Pods', 'PodBrands', 'PodMembers', 'BrandOwners', 'StructMeta'].forEach(tab);
+   'Pods', 'PodBrands', 'BrandTeam', 'PodMembers', 'BrandOwners', 'StructMeta'].forEach(tab);
   SpreadsheetApp.getActiveSpreadsheet().toast('Tabs ready. Now deploy as a web app.');
 }

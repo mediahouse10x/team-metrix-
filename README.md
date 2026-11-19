@@ -42,10 +42,12 @@ The team list comes from Team & Roles and the quantities from the Deliverables p
 
 How the team is organised, one structure per month — the month picker is the structure selector, so November's pods stay November's however you rearrange December.
 
-- **Builder** — pods as colour-headed cards. Drag brand chips and people between pods, or pick them from the "+ Add" selects. Add, rename, recolour, retype, reorder and delete pods (deleting one moves its brands and people to Unassigned). Click a brand to set its primary and backup owner and the owner's time percent; click a person to set display name, seniority, capacity, skills and their roles in the pod. **Load starting structure** fills in the pods from the agency's current setup, matching brands and people by name so nothing is duplicated.
-- **Checks** run live at the top. *Errors* — a brand with no primary owner, an owner outside the brand's pod (floaters excepted), duplicate display names. *Warnings* — a pod with no lead or no senior, someone in no pod, a senior owning more than three brands, and a pod planned past its editing capacity (capacity × (1 − owner time), measured against the pieces the Allocation section has given its members).
+- **Builder** — pods as colour-headed cards. Drag brand chips and people between pods, or pick them from the "+ Add" selects. Add, rename, recolour, retype, reorder and delete pods (deleting one moves its brands and people to Unassigned). **Load starting structure** fills in the pods from the agency's current setup, matching brands and people by name so nothing is duplicated.
+- **Click a channel** to decide who works on it: tick any of its pod's people (floaters from any pod are available too), then pick the primary and backup owner and the owner's time percent. The owner is always on the channel and cannot be unticked. The chip then reads `Doctor Farmer · Kamesh +1`.
+- **Click a person** to set display name, seniority, capacity, skills and their roles in the pod, and to see the channels they own and the channels they merely work on.
+- **Checks** run live at the top. *Errors* — a brand with no primary owner, an owner or a crew member outside the brand's pod (floaters excepted), duplicate display names. *Warnings* — a pod with no lead or no senior, someone in no pod, a channel with nobody or with only one person, a senior owning more than three brands, and a pod planned past its editing capacity (capacity × (1 − owner time), measured against the pieces the Allocation section has given its members).
 
-Pods, brands, members and roles are all created from the UI — nothing is hard-coded.
+Pods, channels, people and roles are all decided in the UI — nothing is hard-coded. Brands come from Deliverables → Plan and people from Team & Roles: the same lists, never copies. Moving a brand or a person between pods drops anyone who no longer belongs on that pod's channels, so the structure cannot drift into a state the checks would reject.
 
 ### Running the tests
 

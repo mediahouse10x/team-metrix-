@@ -10,6 +10,7 @@
  *   smonths["2026-11"] = {
  *     pods:  [{id,name,type,color,sort,desc}],   type: organic | ads | floater
  *     bpod:  {brandId: podId},                   a brand sits in at most one pod
+ *     bteam: {brandId: [personId, ...]},         who works on that channel
  *     mpod:  {personId: podId},                  a person sits in at most one pod
  *     roles: {personId: ["lead","owner","editor","qc","floater"]},
  *     own:   {brandId: {p:primaryId, b:backupId, pct:40}},
@@ -33,7 +34,7 @@
   var DEFAULT_OWNER_PCT = 40;
 
   function emptyStructure() {
-    return { pods: [], bpod: {}, mpod: {}, roles: {}, own: {}, meta: { manager: "", lead: "" } };
+    return { pods: [], bpod: {}, bteam: {}, mpod: {}, roles: {}, own: {}, meta: { manager: "", lead: "" } };
   }
 
   /** The structure in force for a month. Month-keyed, so "active" means "this month's". */
@@ -43,6 +44,7 @@
     return {
       pods: s.pods || [],
       bpod: s.bpod || {},
+      bteam: s.bteam || {},
       mpod: s.mpod || {},
       roles: s.roles || {},
       own: s.own || {},
@@ -89,6 +91,27 @@
     var bpod = getActiveStructure(smonths, month).bpod, out = [];
     Object.keys(bpod).forEach(function (bid) { if (bpod[bid] === podId) out.push(bid); });
     return out;
+  }
+
+  /** Everyone working on a channel. The owner always counts as one of them. */
+  function peopleOnBrand(struct, brandId) {
+    var list = struct.bteam && Array.isArray(struct.bteam[brandId]) ? struct.bteam[brandId].slice() : [];
+    var o = struct.own && struct.own[brandId];
+    if (o && o.p && list.indexOf(o.p) < 0) list.unshift(o.p);
+    return list;
+  }
+
+  /** Channels a person works on (not only the ones they own). */
+  function brandsWorkedOn(struct, personId) {
+    var out = [];
+    Object.keys(struct.bpod || {}).forEach(function (bid) {
+      if (peopleOnBrand(struct, bid).indexOf(personId) >= 0) out.push(bid);
+    });
+    return out;
+  }
+
+  function getBrandTeam(smonths, month, brandId) {
+    return peopleOnBrand(getActiveStructure(smonths, month), brandId);
   }
 
   function rolesOf(struct, personId) {
@@ -163,6 +186,17 @@
           msg: (owner ? displayNameOf(owner) : "The owner") + " owns " + brand.name + " but is not in its pod."
         });
       }
+      // Everyone put on a channel must sit in its pod, or be a floater.
+      (struct.bteam && struct.bteam[bid] ? struct.bteam[bid] : []).forEach(function (pid) {
+        var mp = struct.mpod[pid];
+        if (mp !== podId && !isFloaterPod(struct, mp)) {
+          var who = memberById[pid];
+          errors.push({
+            code: "worker-outside-pod", ref: bid,
+            msg: (who ? displayNameOf(who) : "Someone") + " works on " + brand.name + " but is not in its pod."
+          });
+        }
+      });
     });
 
     // --- warnings ---
@@ -179,6 +213,16 @@
       var load = members.reduce(function (t, p) { return t + (+loadFor(p.id) || 0); }, 0);
       if (capacity > 0 && load > capacity)
         warnings.push({ code: "over-capacity", ref: pod.id, msg: pod.name + " is over capacity: " + load + " planned against " + capacity + " editing capacity." });
+    });
+
+    Object.keys(struct.bpod).forEach(function (bid) {
+      var brand = brandById[bid];
+      if (!brand || !struct.bpod[bid]) return;
+      var crew = peopleOnBrand(struct, bid);
+      if (!crew.length)
+        warnings.push({ code: "channel-no-people", ref: bid, msg: "Nobody is working on " + brand.name + "." });
+      else if (crew.length === 1)
+        warnings.push({ code: "channel-one-person", ref: bid, msg: brand.name + " has only one person on it — no cover if they are away." });
     });
 
     team.forEach(function (p) {
@@ -200,6 +244,9 @@
     getPodForBrand: getPodForBrand,
     getOwnerForBrand: getOwnerForBrand,
     getMembersOfPod: getMembersOfPod,
+    getBrandTeam: getBrandTeam,
+    peopleOnBrand: peopleOnBrand,
+    brandsWorkedOn: brandsWorkedOn,
     brandsOfPod: brandsOfPod,
     sortedPods: sortedPods,
     podById: podById,

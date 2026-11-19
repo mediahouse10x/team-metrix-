@@ -923,7 +923,32 @@ async function exportAllocCSV(){
 // The month picker is the structure selector: one structure per month.
 const POD_COLORS=["#2f6b4f","#1f6f8b","#a36a00","#7a4fb5","#b8520f","#4a6b2f","#9b2f5f","#5d6b62"];
 const memberById=id=>config.team.find(p=>p.id===id);
-function structOf(m){ if(!smonths[m])smonths[m]=TMModel.emptyStructure(); return smonths[m]; }
+function structOf(m){
+  if(!smonths[m])smonths[m]=TMModel.emptyStructure();
+  const s=smonths[m];
+  ["pods"].forEach(k=>{if(!Array.isArray(s[k]))s[k]=[];});
+  ["bpod","bteam","mpod","roles","own"].forEach(k=>{if(!s[k]||typeof s[k]!=="object")s[k]={};});
+  if(!s.meta)s.meta={manager:"",lead:""};
+  return s;
+}
+// After a move, drop anyone who no longer belongs: a channel's crew and its owners must
+// sit in the channel's pod (or be floaters). Brands parked in Unassigned keep theirs, so
+// dragging one out and back does not lose the setup.
+function pruneStructure(s){
+  Object.keys(s.bteam).forEach(bid=>{
+    const pod=s.bpod[bid]; if(!pod)return;
+    const ok=pid=>{const mp=s.mpod[pid];return mp&&(mp===pod||TMModel.isFloaterPod(s,mp));};
+    s.bteam[bid]=(s.bteam[bid]||[]).filter(ok);
+    if(!s.bteam[bid].length)delete s.bteam[bid];
+  });
+  Object.keys(s.own).forEach(bid=>{
+    const pod=s.bpod[bid]; if(!pod)return;
+    const o=s.own[bid], ok=pid=>pid&&(s.mpod[pid]===pod||TMModel.isFloaterPod(s,s.mpod[pid]));
+    if(!ok(o.p))o.p="";
+    if(!ok(o.b))o.b="";
+    if(!o.p&&!o.b)delete s.own[bid];
+  });
+}
 function piecesFor(m,pid){ const p=memberById(pid); return p?personLoad(m,p).qty:0; }
 function structIssues(m){
   return TMModel.validate({struct:structOf(m),brands:config.brands,team:config.team,loadFor:pid=>piecesFor(m,pid)});
@@ -958,6 +983,7 @@ function renderPods(){
   return `
   <div class="row between"><h1 style="font-size:22px">Structure · ${esc(monthLabel(m))}</h1>
     <div class="row">${pods.length?"":`<button id="seedStruct">Load starting structure</button>`}<button id="copyPrevStruct">Copy from ${esc(monthLabel(shiftMonth(m,-1)))}</button><button class="primary" id="addPod">Add pod</button></div></div>
+  <p class="muted small" style="margin:-8px 0 0">Brands come from <a href="#plan">Deliverables → Plan</a> and people from <a href="#team">Team &amp; Roles</a> — the same lists, not copies. Anything you add here shows up there too.</p>
   ${issueBox}
   <div class="card">
     <div class="flds" style="margin-top:0">
@@ -1023,8 +1049,11 @@ function podCard(m,s,pod,ix,n){
 }
 
 function brandChip(m,b){
-  const own=ownerLabel(m,b.id), sel=ui.structSel&&ui.structSel.t==="brand"&&ui.structSel.id===b.id;
-  return `<span class="chip ${sel?"sel":""}" data-drag="brand:${b.id}" data-pick="brand:${b.id}" title="${esc(b.name)}${own?" · owner "+esc(own):""}">${esc(b.name)}${own?`<span class="own">${esc(own)}</span>`:`<span class="own" style="color:var(--low)">no owner</span>`}</span>`;
+  const s=structOf(m), own=ownerLabel(m,b.id), crew=TMModel.peopleOnBrand(s,b.id);
+  const sel=ui.structSel&&ui.structSel.t==="brand"&&ui.structSel.id===b.id;
+  const extra=crew.length-(own?1:0);
+  const tail=own?`${esc(own)}${extra>0?" +"+extra:""}`:(crew.length?`${crew.length} on it`:"no owner");
+  return `<span class="chip ${sel?"sel":""}" data-drag="brand:${b.id}" data-pick="brand:${b.id}" title="${esc(b.name)} · ${crew.length} ${crew.length===1?"person":"people"}${own?" · owner "+esc(own):""}">${esc(b.name)}<span class="own" ${own?"":'style="color:var(--low)"'}>${tail}</span></span>`;
 }
 function memberCard(m,s,p){
   const roles=TMModel.rolesOf(s,p.id), sel=ui.structSel&&ui.structSel.t==="member"&&ui.structSel.id===p.id;
@@ -1054,6 +1083,12 @@ function detailPanel(m,s){
         <label for="bo-pct">Owner time %<input type="number" id="bo-pct" data-owner="${b.id}" data-slot="pct" min="0" max="100" step="5" value="${o.pct==null?TMModel.DEFAULT_OWNER_PCT:o.pct}"></label>
         <label for="bk">Kind<select id="bk" data-brandfld="${b.id}" data-sf="kind"><option value="organic" ${b.kind!=="ads"?"selected":""}>Organic channel</option><option value="ads" ${b.kind==="ads"?"selected":""}>Ad brand</option></select></label>
       </div>
+      <div class="sublab">Who works on this channel</div>
+      ${podId?(choices.length?`<div class="jobs">${choices.map(p=>{const on=TMModel.peopleOnBrand(s,b.id).includes(p.id),isOwner=o.p===p.id;
+        return `<label for="bt-${p.id}" ${isOwner?'style="border-color:var(--accent);background:var(--accent-soft)"':""}><input type="checkbox" id="bt-${p.id}" data-bteam="${b.id}" value="${p.id}" ${on?"checked":""} ${isOwner?"disabled":""}>${esc(TMModel.displayNameOf(p))}${isOwner?" (owner)":""}</label>`;}).join("")}</div>
+        <p class="muted small" style="margin:8px 0 0">${TMModel.peopleOnBrand(s,b.id).length} on this channel. Only people in ${esc(pod.name)} and floaters can be picked — drag someone into the pod first to add them here.</p>`
+        :`<p class="muted small" style="margin:6px 0 0">${esc(pod.name)} has nobody in it yet.</p>`)
+        :`<p class="muted small" style="margin:6px 0 0">Put the brand in a pod first.</p>`}
       <div class="sublab">Platforms</div>
       <div class="jobs">${PLATFORMS.map(x=>`<label for="pf-${esc(x)}"><input type="checkbox" id="pf-${esc(x)}" data-blist="${b.id}" data-sf="platforms" value="${esc(x)}" ${(b.platforms||[]).includes(x)?"checked":""}>${esc(x)}</label>`).join("")}</div>
       <div class="sublab">Content formats</div>
@@ -1080,6 +1115,10 @@ function detailPanel(m,s){
     <div class="sublab">Owns</div>
     ${owned.length?`<div class="chips">${owned.map(bid=>{const b=brandById(bid);return b?`<span class="chip" data-pick="brand:${bid}">${esc(b.name)}</span>`:"";}).join("")}</div>`
       :`<p class="muted small" style="margin:6px 0 0">No brands.</p>`}
+    <div class="sublab">Works on</div>
+    ${(()=>{const w=TMModel.brandsWorkedOn(s,p.id).filter(b=>!owned.includes(b));
+      return w.length?`<div class="chips">${w.map(bid=>{const b=brandById(bid);return b?`<span class="chip" data-pick="brand:${bid}">${esc(b.name)}</span>`:"";}).join("")}</div>`
+        :`<p class="muted small" style="margin:6px 0 0">${owned.length?"Only the channels above.":"No channels yet — open a channel and tick them on it."}</p>`;})()}
     <p class="muted small" style="margin:12px 0 0">Editing capacity after owner time: <b>${TMModel.editingCapacity(p,s)}</b>${p.capacity?` of ${p.capacity}`:" — set a capacity above"} · planned this month: <b>${piecesFor(m,p.id)}</b> pieces</p>
   </div>`;
 }
@@ -1132,6 +1171,16 @@ async function seedStructure(m){
       if(b&&owner)s.own[b.id]={p:owner.id,b:backup?backup.id:"",pct:TMModel.DEFAULT_OWNER_PCT};
     });
   }));
+  // a channel starts with its owner plus the pod's editors; change it per channel afterwards
+  SEED.forEach(blk=>{
+    const editors=blk.members.filter(mm=>(mm.roles||[]).includes("editor")).map(mm=>podOf[mm.name]).filter(Boolean);
+    blk.brands.forEach(bn=>{
+      const b=byName[bn]; if(!b)return;
+      const o=s.own[b.id];
+      const crew=[...new Set([...(o&&o.p?[o.p]:[]),...editors.map(p=>p.id)])];
+      if(crew.length)s.bteam[b.id]=crew;
+    });
+  });
   render(); await saveConfig(); await saveStruct(m);
   toast("Starting structure loaded — edit it however you like");
 }
@@ -1166,6 +1215,7 @@ async function moveToPod(kind,id,podId){
     if(podId)s.mpod[id]=podId; else delete s.mpod[id];
     const p=memberById(id); toast(`${p?TMModel.displayNameOf(p):"Person"} → ${podId?(TMModel.podById(s,podId)||{}).name:"Unassigned"}`);
   }
+  pruneStructure(s);
   render(); await saveStruct(m);
 }
 
@@ -1336,7 +1386,13 @@ view().addEventListener("change",async e=>{
     const o=s.own[bid]||{p:"",b:"",pct:TMModel.DEFAULT_OWNER_PCT};
     if(t.dataset.slot==="pct")o.pct=Math.max(0,Math.min(100,+t.value||0)); else o[t.dataset.slot]=t.value;
     if(!o.p&&!o.b)delete s.own[bid]; else s.own[bid]=o;
+    if(o.p){s.bteam[bid]=[...new Set([...(s.bteam[bid]||[]),o.p])];}  // the owner works on it too
     render();await saveStruct(m);toast("Owner updated");return;}
+  if(t.dataset.bteam){
+    const m=ui.month,s=structOf(m),bid=t.dataset.bteam,cur=s.bteam[bid]||[];
+    s.bteam[bid]=t.checked?[...new Set([...cur,t.value])]:cur.filter(x=>x!==t.value);
+    if(!s.bteam[bid].length)delete s.bteam[bid];
+    render();await saveStruct(m);return;}
   if(t.dataset.brandfld){const b=brandById(t.dataset.brandfld);if(b){b[t.dataset.sf]=t.value;render();await saveConfig();}return;}
   if(t.dataset.blist){const b=brandById(t.dataset.blist);if(b){const f=t.dataset.sf,cur=b[f]||[];
     b[f]=t.checked?[...new Set([...cur,t.value])]:cur.filter(x=>x!==t.value);await saveConfig();}return;}

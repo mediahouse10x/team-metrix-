@@ -102,6 +102,29 @@ td.r,th.r{text-align:right}
 .lineinfo{font-size:12px;font-weight:700;white-space:nowrap}
 .lineinfo.ok{color:var(--epi)} .lineinfo.under{color:var(--mpi)} .lineinfo.over{color:var(--low)} .lineinfo.none{color:var(--muted)}
 .line{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:12px}
+.podgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:14px;align-items:start}
+.pod{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.pod>.head{padding:9px 13px;color:#fff;display:flex;justify-content:space-between;align-items:center;gap:8px;font-family:var(--display);font-weight:700}
+.pod>.head .t{font-size:11px;font-weight:600;opacity:.85;text-transform:uppercase;letter-spacing:.05em}
+.pod>.head button{background:rgba(255,255,255,.18);border:none;color:#fff;padding:2px 8px;font-size:12px}
+.pod>.body{padding:10px 13px 13px}
+.pod.drop{outline:2px dashed var(--accent);outline-offset:-3px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:5px 0 0}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:13px;background:var(--bg);cursor:grab}
+.chip.sel{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700}
+.chip .own{font-size:11px;color:var(--muted)}
+.chip.sel .own{color:var(--accent)}
+.mcard{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:5px 9px;margin-top:6px;font-size:13px;cursor:grab;background:var(--bg)}
+.mcard.sel{border-color:var(--accent);background:var(--accent-soft)}
+.rtag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;border-radius:4px;padding:1px 5px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}
+.rtag.sr{border-color:var(--accent);color:var(--accent)}
+.sublab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;margin-top:11px}
+.issue{font-size:13px;padding:3px 0}
+.issue .err{color:var(--low);font-weight:700}
+.issue .warn{color:var(--mpi);font-weight:700}
+.dragging{opacity:.4}
+.flds{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:12px}
+.flds label{display:grid;gap:4px;font-size:13px;color:var(--muted);font-weight:600}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--bg);padding:1px 5px;border-radius:5px}
 canvas{max-width:100%}
 .chartbox{position:relative;height:260px}
@@ -118,6 +141,7 @@ input.cell{width:90px;text-align:right}
       <button data-sec="metrics">Team Metrics</button>
       <button data-sec="deliv">Deliverables</button>
       <button data-sec="alloc">Allocation</button>
+      <button data-sec="struct">Structure</button>
     </div>
     <nav id="nav"></nav>
     <div class="spacer"></div>
@@ -130,6 +154,7 @@ input.cell{width:90px;text-align:right}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="model.js"></script>
 <script>
 (function(){
 "use strict";
@@ -160,10 +185,12 @@ let config=defaultConfig(), configSaved=false;
 const months={};           // metrics:      "2026-11" -> {e:{pid:{jid:{g,a}}}}
 const bmonths={};          // deliverables: "2026-11" -> {q:{brandId:{itemId:qty}}}
 const amonths={};          // allocation:   "2026-11" -> {a:{"brandId|itemId|personId":value}}
+const smonths={};          // structure:    "2026-11" -> {pods,bpod,mpod,roles,own,meta}  (see model.js)
 const sheet={url:"",state:"off",msg:""};   // Google Sheet backend (Apps Script web app)
 const ui={view:"dashboard",month:currentMonth(),entryPerson:null,dashPerson:null,drafts:{},confirmDel:null,
           brandSel:null,brandDash:null,bdrafts:{},
-          allocWho:null,allocPerson:null,adrafts:{}};
+          allocWho:null,allocPerson:null,adrafts:{},
+          structSel:null,podEdit:null};
 const charts={};
 // Three independent sections. Allocation reads the team and the plan but writes only its own data;
 // the metrics and deliverables features behave exactly as they did before it existed.
@@ -175,7 +202,8 @@ const VIEWS={
   plan:     {sec:"deliv",  label:"Plan"},
   brands:   {sec:"deliv",  label:"Overview"},
   split:    {sec:"alloc",  label:"Split"},
-  load:     {sec:"alloc",  label:"Team load"}
+  load:     {sec:"alloc",  label:"Team load"},
+  pods:     {sec:"struct", label:"Builder"}
 };
 const secOf=v=>(VIEWS[v]||VIEWS.dashboard).sec;
 
@@ -226,7 +254,7 @@ function plain(o){return JSON.parse(JSON.stringify(o));}
 const LS_DATA="tm-data", LS_URL="tm-sheet-url";
 function lsGet(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
-function cacheSave(){lsSet(LS_DATA,JSON.stringify({config,months,bmonths,amonths}));}
+function cacheSave(){lsSet(LS_DATA,JSON.stringify({config,months,bmonths,amonths,smonths}));}
 function cacheLoad(){
   sheet.url=lsGet(LS_URL)||"";
   try{const d=JSON.parse(lsGet(LS_DATA)||"null");
@@ -234,14 +262,17 @@ function cacheLoad(){
     if(d&&d.months)Object.assign(months,d.months);
     if(d&&d.bmonths)Object.assign(bmonths,d.bmonths);
     if(d&&d.amonths)Object.assign(amonths,d.amonths);
+    if(d&&d.smonths)Object.assign(smonths,d.smonths);
   }catch(e){}
 }
 function normalizeConfig(c){
   const d=defaultConfig();
   return {lib:(c&&c.lib&&c.lib.length)?c.lib:d.lib,
-          team:(c&&Array.isArray(c.team))?c.team.map(p=>({id:p.id,name:p.name,level:p.level==="Senior"?"Senior":"Junior",jobs:p.jobs||[]})):[],
+          team:(c&&Array.isArray(c.team))?c.team.map(p=>({id:p.id,name:p.name,level:p.level==="Senior"?"Senior":"Junior",jobs:p.jobs||[],
+                 display:p.display||"",skills:p.skills||[],capacity:p.capacity==null?"":+p.capacity||"",active:p.active!==false})):[],
           settings:Object.assign({},d.settings,(c&&c.settings)||{}),
-          brands:(c&&Array.isArray(c.brands))?c.brands.map(b=>({id:b.id,name:b.name,items:(b.items||[]).map(i=>({id:i.id,name:i.name}))})):[],
+          brands:(c&&Array.isArray(c.brands))?c.brands.map(b=>({id:b.id,name:b.name,items:(b.items||[]).map(i=>({id:i.id,name:i.name})),
+                   kind:b.kind||"organic",platforms:b.platforms||[],formats:b.formats||[],notes:b.notes||"",active:b.active!==false})):[],
           atags:(c&&c.atags&&typeof c.atags==="object")?c.atags:{}};
 }
 function setConn(state,msg){sheet.state=state;sheet.msg=msg||"";updateBadge();}
@@ -281,6 +312,8 @@ async function pullSheet(){
     Object.assign(bmonths,j.bmonths||{});
     for(const k of Object.keys(amonths))delete amonths[k];
     Object.assign(amonths,j.amonths||{});
+    for(const k of Object.keys(smonths))delete smonths[k];
+    Object.assign(smonths,j.smonths||{});
     ui.drafts={}; ui.bdrafts={}; ui.adrafts={};
     setConn("ok");cacheSave();render();return true;
   }catch(err){setConn("err",err.message);render();return false;}
@@ -313,6 +346,13 @@ async function saveAllocMonth(m){
   try{await queued("a_"+m,()=>sheetCall("saveAlloc",{month:m,alloc:plain((amonths[m]&&amonths[m].a)||{})}));setConn("ok");return true;}
   catch(err){setConn("err",err.message);toast("Couldn't save to the sheet — kept in this browser.");return false;}
 }
+async function saveStruct(m){
+  cacheSave();
+  if(!sheet.url)return true;
+  setConn("sync");
+  try{await queued("s_"+m,()=>sheetCall("saveStruct",{month:m,struct:plain(smonths[m]||TMModel.emptyStructure())}));setConn("ok");return true;}
+  catch(err){setConn("err",err.message);toast("Couldn't save to the sheet — kept in this browser.");return false;}
+}
 
 // ---------- Rendering ----------
 const view=()=>document.getElementById("view");
@@ -324,12 +364,14 @@ function render(){
   document.getElementById("month").value=ui.month;
   for(const k in charts){charts[k].destroy();delete charts[k];}
   const fn={dashboard:renderDashboard,entry:renderEntry,team:renderTeam,jobs:renderJobs,
-            plan:renderPlan,brands:renderBrands,split:renderSplit,load:renderLoad}[ui.view]||renderDashboard;
+            plan:renderPlan,brands:renderBrands,split:renderSplit,load:renderLoad,
+            pods:renderPods}[ui.view]||renderDashboard;
   view().innerHTML=connNote()+fn();
   updateBadge();
   if(ui.view==="dashboard")drawDashCharts();
   if(ui.view==="brands")drawBrandChart();
   if(ui.view==="load")drawLoadChart();
+  if(ui.view==="pods")wireDnD();
 }
 function pill(st){return st?`<span class="pill s-${st}">${st==="Below"?"Below LPI":st}</span>`:`<span class="pill s-none">No data</span>`;}
 function meter(v){if(v==null)return"";const st=statusOf(v);const col={EPI:"var(--epi)",MPI:"var(--mpi)",LPI:"var(--lpi)",Below:"var(--low)"}[st];
@@ -876,17 +918,274 @@ async function exportAllocCSV(){
   await download(`Allocation ${monthLabel(m)}.csv`,new Blob([toCSV(rows)],{type:"text/csv;charset=utf-8"}));
 }
 
+// ---------- Structure: pods, brand owners, member roles ----------
+// All the rules live in model.js (TMModel) so they can be tested on their own.
+// The month picker is the structure selector: one structure per month.
+const POD_COLORS=["#2f6b4f","#1f6f8b","#a36a00","#7a4fb5","#b8520f","#4a6b2f","#9b2f5f","#5d6b62"];
+const memberById=id=>config.team.find(p=>p.id===id);
+function structOf(m){ if(!smonths[m])smonths[m]=TMModel.emptyStructure(); return smonths[m]; }
+function piecesFor(m,pid){ const p=memberById(pid); return p?personLoad(m,p).qty:0; }
+function structIssues(m){
+  return TMModel.validate({struct:structOf(m),brands:config.brands,team:config.team,loadFor:pid=>piecesFor(m,pid)});
+}
+function ownerLabel(m,bid){
+  const o=TMModel.getOwnerForBrand(smonths,m,bid); if(!o)return "";
+  const p=memberById(o.primary); return p?TMModel.displayNameOf(p):"";
+}
+// Everyone who may own a brand in this pod: that pod, plus any floater pod.
+function ownerChoices(m,podId){
+  const s=structOf(m);
+  return config.team.filter(p=>{
+    const mp=s.mpod[p.id];
+    return mp&&(mp===podId||TMModel.isFloaterPod(s,mp));
+  });
+}
+const SKILLS=["video edit","design","motion","writing","shooting"];
+const PLATFORMS=["Instagram","YouTube","Facebook","Other"];
+const FORMATS=["reel","carousel","post","story","ad video","ad static","ad variant"];
+
+function renderPods(){
+  const m=ui.month, s=structOf(m), pods=TMModel.sortedPods(s), v=structIssues(m);
+  const unBrands=config.brands.filter(b=>!s.bpod[b.id]);
+  const unMembers=config.team.filter(p=>!s.mpod[p.id]);
+  const issueBox=(v.errors.length||v.warnings.length)?`
+    <div class="card" style="border-color:${v.errors.length?"var(--low)":"var(--mpi)"}">
+      <div class="row between"><h2>${v.errors.length?"Fix before this structure is usable":"Worth a look"}</h2>
+        <span class="small ${v.errors.length?"":"muted"}" style="${v.errors.length?"color:var(--low);font-weight:700":""}">${v.errors.length} error${v.errors.length===1?"":"s"} · ${v.warnings.length} warning${v.warnings.length===1?"":"s"}</span></div>
+      ${v.errors.map(e=>`<div class="issue"><span class="err">Error</span> ${esc(e.msg)}</div>`).join("")}
+      ${v.warnings.map(w=>`<div class="issue"><span class="warn">Warning</span> ${esc(w.msg)}</div>`).join("")}
+    </div>`:`<div class="card"><div class="row between"><h2>No problems found</h2><span class="small" style="color:var(--epi);font-weight:700">Ready to use</span></div></div>`;
+  return `
+  <div class="row between"><h1 style="font-size:22px">Structure · ${esc(monthLabel(m))}</h1>
+    <div class="row">${pods.length?"":`<button id="seedStruct">Load starting structure</button>`}<button id="copyPrevStruct">Copy from ${esc(monthLabel(shiftMonth(m,-1)))}</button><button class="primary" id="addPod">Add pod</button></div></div>
+  ${issueBox}
+  <div class="card">
+    <div class="flds" style="margin-top:0">
+      <label for="stMgr">Manager<input type="text" id="stMgr" data-stmeta="manager" value="${esc(s.meta.manager||"")}" placeholder="Name"></label>
+      <label for="stLead">Team lead<select id="stLead" data-stmeta="lead"><option value="">—</option>
+        ${config.team.map(p=>`<option value="${p.id}" ${s.meta.lead===p.id?"selected":""}>${esc(p.name)}</option>`).join("")}</select></label>
+    </div>
+  </div>
+  <div class="podgrid">
+    ${pods.map((pod,ix)=>podCard(m,s,pod,ix,pods.length)).join("")}
+    <div class="pod" data-drop="">
+      <div class="head" style="background:var(--muted)"><span>Unassigned</span><span class="t">${unBrands.length} brands · ${unMembers.length} people</span></div>
+      <div class="body">
+        <div class="sublab" style="margin-top:0">Brands</div>
+        <div class="chips">${unBrands.length?unBrands.map(b=>brandChip(m,b)).join(""):`<span class="muted small">All brands are in a pod.</span>`}</div>
+        <form id="newBrandS" class="row" style="margin-top:8px"><input type="text" id="nbName" placeholder="New brand" required style="flex:1;min-width:110px" aria-label="New brand name"><button type="submit">Add</button></form>
+        <div class="sublab">People</div>
+        ${unMembers.length?unMembers.map(p=>memberCard(m,s,p)).join(""):`<p class="muted small" style="margin:6px 0 0">Everyone is in a pod.</p>`}
+        <form id="newMemberS" class="row" style="margin-top:8px"><input type="text" id="nmName" placeholder="New person" required style="flex:1;min-width:110px" aria-label="New person name">
+          <select id="nmLevel" aria-label="Seniority"><option>Junior</option><option>Senior</option></select><button type="submit">Add</button></form>
+      </div>
+    </div>
+  </div>
+  ${detailPanel(m,s)}`;
+}
+
+function podCard(m,s,pod,ix,n){
+  const brands=config.brands.filter(b=>s.bpod[b.id]===pod.id);
+  const members=config.team.filter(p=>s.mpod[p.id]===pod.id);
+  const editing=ui.podEdit===pod.id;
+  const free=config.brands.filter(b=>!s.bpod[b.id]), freeP=config.team.filter(p=>!s.mpod[p.id]);
+  return `
+  <div class="pod" data-drop="${pod.id}">
+    <div class="head" style="background:${esc(pod.color||"#2f6b4f")}">
+      <span>${esc(pod.name)} <span class="t">${esc(pod.type)}</span></span>
+      <button data-podedit="${pod.id}">${editing?"Done":"Edit"}</button>
+    </div>
+    <div class="body">
+      ${editing?`
+      <div class="flds" style="margin-top:0">
+        <label for="pn-${pod.id}">Name<input type="text" id="pn-${pod.id}" data-podname="${pod.id}" value="${esc(pod.name)}"></label>
+        <label for="pt-${pod.id}">Type<select id="pt-${pod.id}" data-podtype="${pod.id}">${TMModel.POD_TYPES.map(t=>`<option ${pod.type===t?"selected":""}>${t}</option>`).join("")}</select></label>
+        <label for="pc-${pod.id}">Colour<input type="color" id="pc-${pod.id}" data-podcolor="${pod.id}" value="${esc(pod.color||"#2f6b4f")}" style="padding:2px;height:34px"></label>
+      </div>
+      <label class="small muted" for="pd-${pod.id}" style="display:grid;gap:4px;margin-top:10px;font-weight:600">Description<input type="text" id="pd-${pod.id}" data-poddesc="${pod.id}" value="${esc(pod.desc||"")}" placeholder="What this pod covers"></label>
+      <div class="row" style="margin-top:10px">
+        <button data-podmove="${pod.id}" data-dir="-1" ${ix===0?"disabled":""}>← Move</button>
+        <button data-podmove="${pod.id}" data-dir="1" ${ix===n-1?"disabled":""}>Move →</button>
+        ${ui.confirmDel===pod.id
+          ? `<button class="danger" data-poddelyes="${pod.id}">${brands.length||members.length?"Move out &amp; delete":"Delete"}</button><button class="ghost" data-delno="1">Cancel</button>`
+          : `<button class="ghost danger" data-poddel="${pod.id}">Delete pod</button>`}
+      </div>
+      ${ui.confirmDel===pod.id&&(brands.length||members.length)?`<p class="small" style="color:var(--mpi);margin:8px 0 0">${brands.length} brand${brands.length===1?"":"s"} and ${members.length} ${members.length===1?"person":"people"} will move to Unassigned.</p>`:""}
+      <hr style="border:none;border-top:1px solid var(--line);margin:12px 0">`:""}
+      <div class="sublab" style="margin-top:0">Brands</div>
+      <div class="chips">${brands.length?brands.map(b=>brandChip(m,b)).join(""):`<span class="muted small">Drag a brand here.</span>`}</div>
+      ${free.length?`<select data-addbrand="${pod.id}" aria-label="Add a brand to ${esc(pod.name)}" style="margin-top:8px;width:100%"><option value="">+ Add brand…</option>${free.map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join("")}</select>`:""}
+      <div class="sublab">People</div>
+      ${members.length?members.map(p=>memberCard(m,s,p)).join(""):`<p class="muted small" style="margin:6px 0 0">Drag a person here.</p>`}
+      ${freeP.length?`<select data-addmember="${pod.id}" aria-label="Add a person to ${esc(pod.name)}" style="margin-top:8px;width:100%"><option value="">+ Add person…</option>${freeP.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>`:""}
+    </div>
+  </div>`;
+}
+
+function brandChip(m,b){
+  const own=ownerLabel(m,b.id), sel=ui.structSel&&ui.structSel.t==="brand"&&ui.structSel.id===b.id;
+  return `<span class="chip ${sel?"sel":""}" data-drag="brand:${b.id}" data-pick="brand:${b.id}" title="${esc(b.name)}${own?" · owner "+esc(own):""}">${esc(b.name)}${own?`<span class="own">${esc(own)}</span>`:`<span class="own" style="color:var(--low)">no owner</span>`}</span>`;
+}
+function memberCard(m,s,p){
+  const roles=TMModel.rolesOf(s,p.id), sel=ui.structSel&&ui.structSel.t==="member"&&ui.structSel.id===p.id;
+  const owned=TMModel.brandsOwnedBy(s,p.id).length;
+  return `<div class="mcard ${sel?"sel":""}" data-drag="member:${p.id}" data-pick="member:${p.id}">
+    <span><b>${esc(TMModel.displayNameOf(p))}</b>${owned?` <span class="muted">· ${owned} brand${owned===1?"":"s"}</span>`:""}</span>
+    <span class="row" style="gap:4px"><span class="rtag ${p.level==="Senior"?"sr":""}">${p.level==="Senior"?"SR":"JR"}</span>
+    ${roles.map(r=>`<span class="rtag">${esc((TMModel.ROLES.find(x=>x.id===r)||{label:r}).label)}</span>`).join("")}</span>
+  </div>`;
+}
+
+function detailPanel(m,s){
+  const sel=ui.structSel; if(!sel)return `<div class="card"><p class="muted small" style="margin:0">Click a brand chip or a person to set owners, roles and capacity. Drag them between pods to move them.</p></div>`;
+  if(sel.t==="brand"){
+    const b=brandById(sel.id); if(!b)return "";
+    const podId=s.bpod[b.id], pod=TMModel.podById(s,podId);
+    const o=s.own[b.id]||{}, choices=ownerChoices(m,podId);
+    return `
+    <div class="card">
+      <div class="row between"><h2>${esc(b.name)}</h2><span class="muted small">${pod?esc(pod.name):"Unassigned"} · <button class="linkbtn" id="clearSel">close</button></span></div>
+      ${podId?"":`<p class="small" style="color:var(--mpi);margin:8px 0 0">Put this brand in a pod before picking an owner.</p>`}
+      <div class="flds">
+        <label for="bo-p">Primary owner<select id="bo-p" data-owner="${b.id}" data-slot="p" ${podId?"":"disabled"}><option value="">—</option>
+          ${choices.map(p=>`<option value="${p.id}" ${o.p===p.id?"selected":""}>${esc(TMModel.displayNameOf(p))}</option>`).join("")}</select></label>
+        <label for="bo-b">Backup owner<select id="bo-b" data-owner="${b.id}" data-slot="b" ${podId?"":"disabled"}><option value="">—</option>
+          ${config.team.map(p=>`<option value="${p.id}" ${o.b===p.id?"selected":""}>${esc(TMModel.displayNameOf(p))}</option>`).join("")}</select></label>
+        <label for="bo-pct">Owner time %<input type="number" id="bo-pct" data-owner="${b.id}" data-slot="pct" min="0" max="100" step="5" value="${o.pct==null?TMModel.DEFAULT_OWNER_PCT:o.pct}"></label>
+        <label for="bk">Kind<select id="bk" data-brandfld="${b.id}" data-sf="kind"><option value="organic" ${b.kind!=="ads"?"selected":""}>Organic channel</option><option value="ads" ${b.kind==="ads"?"selected":""}>Ad brand</option></select></label>
+      </div>
+      <div class="sublab">Platforms</div>
+      <div class="jobs">${PLATFORMS.map(x=>`<label for="pf-${esc(x)}"><input type="checkbox" id="pf-${esc(x)}" data-blist="${b.id}" data-sf="platforms" value="${esc(x)}" ${(b.platforms||[]).includes(x)?"checked":""}>${esc(x)}</label>`).join("")}</div>
+      <div class="sublab">Content formats</div>
+      <div class="jobs">${FORMATS.map(x=>`<label for="fm-${esc(x).replace(/ /g,"-")}"><input type="checkbox" id="fm-${esc(x).replace(/ /g,"-")}" data-blist="${b.id}" data-sf="formats" value="${esc(x)}" ${(b.formats||[]).includes(x)?"checked":""}>${esc(x)}</label>`).join("")}</div>
+      <label class="small muted" for="bn" style="display:grid;gap:4px;margin-top:12px;font-weight:600">Notes<input type="text" id="bn" data-brandfld="${b.id}" data-sf="notes" value="${esc(b.notes||"")}" placeholder="Anything worth remembering"></label>
+    </div>`;
+  }
+  const p=memberById(sel.id); if(!p)return "";
+  const roles=TMModel.rolesOf(s,p.id), owned=TMModel.brandsOwnedBy(s,p.id);
+  const pod=TMModel.podById(s,s.mpod[p.id]);
+  return `
+  <div class="card">
+    <div class="row between"><h2>${esc(p.name)}</h2><span class="muted small">${pod?esc(pod.name):"Unassigned"} · <button class="linkbtn" id="clearSel">close</button></span></div>
+    <div class="flds">
+      <label for="md">Display name<input type="text" id="md" data-memfld="${p.id}" data-sf="display" value="${esc(p.display||"")}" placeholder="${esc(p.name)}"></label>
+      <label for="ml">Seniority<select id="ml" data-memfld="${p.id}" data-sf="level"><option ${p.level==="Junior"?"selected":""}>Junior</option><option ${p.level==="Senior"?"selected":""}>Senior</option></select></label>
+      <label for="mc">Monthly capacity (points)<input type="number" id="mc" data-memfld="${p.id}" data-sf="capacity" min="0" step="1" value="${p.capacity??""}" placeholder="e.g. 100"></label>
+      <label for="ma">Active<select id="ma" data-memfld="${p.id}" data-sf="active"><option value="1" ${p.active!==false?"selected":""}>Active</option><option value="0" ${p.active===false?"selected":""}>Inactive</option></select></label>
+    </div>
+    <div class="sublab">Roles in pod</div>
+    <div class="jobs">${TMModel.ROLES.map(r=>`<label for="rl-${r.id}"><input type="checkbox" id="rl-${r.id}" data-role="${p.id}" value="${r.id}" ${roles.includes(r.id)?"checked":""}>${esc(r.label)}</label>`).join("")}</div>
+    <div class="sublab">Skills</div>
+    <div class="jobs">${SKILLS.map(x=>`<label for="sk-${esc(x).replace(/ /g,"-")}"><input type="checkbox" id="sk-${esc(x).replace(/ /g,"-")}" data-mlist="${p.id}" data-sf="skills" value="${esc(x)}" ${(p.skills||[]).includes(x)?"checked":""}>${esc(x)}</label>`).join("")}</div>
+    <div class="sublab">Owns</div>
+    ${owned.length?`<div class="chips">${owned.map(bid=>{const b=brandById(bid);return b?`<span class="chip" data-pick="brand:${bid}">${esc(b.name)}</span>`:"";}).join("")}</div>`
+      :`<p class="muted small" style="margin:6px 0 0">No brands.</p>`}
+    <p class="muted small" style="margin:12px 0 0">Editing capacity after owner time: <b>${TMModel.editingCapacity(p,s)}</b>${p.capacity?` of ${p.capacity}`:" — set a capacity above"} · planned this month: <b>${piecesFor(m,p.id)}</b> pieces</p>
+  </div>`;
+}
+
+// ---------- Structure: starting data ----------
+// Matches brands and people by name first, so running this on a sheet that already has
+// them reuses what is there instead of creating a second "Doctor Farmer".
+const SEED=[
+  {pod:"Pod A",type:"organic",brands:["Doctor Farmer","My Health Summit","MHS Diabetes"],
+   members:[{name:"Basha",level:"Senior",roles:["lead","owner"],owns:["My Health Summit"],backup:"Kamesh"},
+            {name:"Kamesh",level:"Senior",roles:["owner"],owns:["Doctor Farmer","MHS Diabetes"],backup:"Basha"},
+            {name:"Rahul Ravichandran",level:"Junior",display:"Rahul R",roles:["editor"]}]},
+  {pod:"Pod B",type:"organic",brands:["My Health School","Longer Life"],
+   members:[{name:"Varadharaj",level:"Senior",roles:["lead","owner"],owns:["My Health School","Longer Life"],backup:"Ashwin"},
+            {name:"Sasil Vikram",level:"Junior",roles:["editor"]},
+            {name:"Micheal",level:"Junior",roles:["editor"]}]},
+  {pod:"Pod C",type:"ads",brands:["VSL","MHS","Scalex"],kind:"ads",
+   members:[{name:"Muthukrishnan",level:"Senior",roles:["lead","owner"],owns:["VSL","MHS","Scalex"],backup:"Ashwin"},
+            {name:"Rahul",level:"Junior",display:"Rahul",roles:["editor"]},
+            {name:"Ragul B",level:"Junior",display:"Ragul B",roles:["editor"]}]},
+  {pod:"Floater",type:"floater",brands:[],
+   members:[{name:"Ashwin",level:"Senior",roles:["qc","floater"]}]}
+];
+function findOrAddBrand(name,kind){
+  const hit=config.brands.find(b=>b.name.trim().toLowerCase()===name.trim().toLowerCase());
+  if(hit){ if(kind&&!hit.kind)hit.kind=kind; return hit; }
+  const b={id:uid("b"),name,items:[],kind:kind||"organic",platforms:[],formats:[],notes:"",active:true};
+  config.brands.push(b); return b;
+}
+function findOrAddMember(spec){
+  const hit=config.team.find(p=>p.name.trim().toLowerCase()===spec.name.trim().toLowerCase());
+  if(hit){ if(spec.display&&!hit.display)hit.display=spec.display; return hit; }
+  const p={id:uid("p"),name:spec.name,level:spec.level,jobs:[],display:spec.display||"",skills:[],capacity:"",active:true};
+  config.team.push(p); return p;
+}
+async function seedStructure(m){
+  const s=structOf(m);
+  const byName={}, podOf={};
+  SEED.forEach((blk,ix)=>{
+    const pod={id:uid("pod"),name:blk.pod,type:blk.type,color:POD_COLORS[ix%POD_COLORS.length],sort:ix+1,desc:""};
+    s.pods.push(pod);
+    blk.brands.forEach(bn=>{const b=findOrAddBrand(bn,blk.kind);byName[bn]=b;s.bpod[b.id]=pod.id;});
+    blk.members.forEach(mem=>{const p=findOrAddMember(mem);podOf[mem.name]=p;s.mpod[p.id]=pod.id;
+      if(mem.roles&&mem.roles.length)s.roles[p.id]=mem.roles.slice();});
+  });
+  // owners need every member to exist, so they are set in a second pass
+  SEED.forEach(blk=>blk.members.forEach(mem=>{
+    (mem.owns||[]).forEach(bn=>{
+      const b=byName[bn], owner=podOf[mem.name], backup=mem.backup?podOf[mem.backup]:null;
+      if(b&&owner)s.own[b.id]={p:owner.id,b:backup?backup.id:"",pct:TMModel.DEFAULT_OWNER_PCT};
+    });
+  }));
+  render(); await saveConfig(); await saveStruct(m);
+  toast("Starting structure loaded — edit it however you like");
+}
+
+// Drag and drop between pods. Re-attached after every render.
+function wireDnD(){
+  const v=view();
+  v.querySelectorAll("[data-drag]").forEach(el=>{
+    el.draggable=true;
+    el.addEventListener("dragstart",e=>{e.dataTransfer.setData("text/plain",el.dataset.drag);e.dataTransfer.effectAllowed="move";el.classList.add("dragging");});
+    el.addEventListener("dragend",()=>el.classList.remove("dragging"));
+  });
+  v.querySelectorAll("[data-drop]").forEach(z=>{
+    z.addEventListener("dragover",e=>{e.preventDefault();e.dataTransfer.dropEffect="move";z.classList.add("drop");});
+    z.addEventListener("dragleave",()=>z.classList.remove("drop"));
+    z.addEventListener("drop",async e=>{
+      e.preventDefault();z.classList.remove("drop");
+      const data=e.dataTransfer.getData("text/plain"); if(!data)return;
+      const ix=data.indexOf(":");
+      await moveToPod(data.slice(0,ix),data.slice(ix+1),z.dataset.drop);
+    });
+  });
+}
+async function moveToPod(kind,id,podId){
+  const m=ui.month,s=structOf(m);
+  if(kind==="brand"){
+    if(s.bpod[id]===podId)return;
+    if(podId)s.bpod[id]=podId; else delete s.bpod[id];
+    const b=brandById(id); toast(`${b?b.name:"Brand"} → ${podId?(TMModel.podById(s,podId)||{}).name:"Unassigned"}`);
+  }else{
+    if(s.mpod[id]===podId)return;
+    if(podId)s.mpod[id]=podId; else delete s.mpod[id];
+    const p=memberById(id); toast(`${p?TMModel.displayNameOf(p):"Person"} → ${podId?(TMModel.podById(s,podId)||{}).name:"Unassigned"}`);
+  }
+  render(); await saveStruct(m);
+}
+
 // ---------- Events ----------
 function go(){const h=location.hash.slice(1);ui.view=VIEWS[h]?h:"dashboard";ui.confirmDel=null;render();}
 window.addEventListener("hashchange",go);
 document.getElementById("seg").addEventListener("click",e=>{
   const b=e.target.closest("button"); if(!b)return;
-  location.hash={deliv:"#plan",alloc:"#split"}[b.dataset.sec]||"#dashboard";
+  location.hash={deliv:"#plan",alloc:"#split",struct:"#pods"}[b.dataset.sec]||"#dashboard";
 });
 document.getElementById("month").addEventListener("change",e=>{if(e.target.value){ui.month=e.target.value;render();}});
 
 view().addEventListener("click",async e=>{
-  const t=e.target.closest("button"); if(!t)return;
+  const t=e.target.closest("button");
+  // Brand chips and member cards are not buttons (they have to be draggable), so they
+  // are picked up before the button-only path below.
+  const pickEl=!t&&e.target.closest("[data-pick]");
+  if(pickEl){const ix=pickEl.dataset.pick.indexOf(":");ui.structSel={t:pickEl.dataset.pick.slice(0,ix),id:pickEl.dataset.pick.slice(ix+1)};render();
+    document.querySelector("#view > .card:last-child")?.scrollIntoView({block:"nearest"});return;}
+  if(!t)return;
   if(t.dataset.dash){ui.dashPerson=t.dataset.dash;render();document.getElementById("dashPerson")?.scrollIntoView({block:"center"});return;}
   if(t.dataset.ep){ui.entryPerson=t.dataset.ep;render();return;}
   if(t.dataset.brand){ui.brandSel=t.dataset.brand;ui.confirmDel=null;render();return;}
@@ -930,6 +1229,33 @@ view().addEventListener("click",async e=>{
     render(); toast(`Gave ${left} more. Press Save to keep it.`); return;
   }
   if(t.id==="exportAllocCsv"){await exportAllocCSV();return;}
+  // ---- structure ----
+  if(t.id==="clearSel"){ui.structSel=null;render();return;}
+  if(t.id==="seedStruct"){await seedStructure(ui.month);return;}
+  if(t.id==="addPod"){
+    const m=ui.month,s=structOf(m),n=s.pods.length;
+    s.pods.push({id:uid("pod"),name:"Pod "+String.fromCharCode(65+n),type:n&&!s.pods.some(p=>p.type==="ads")?"ads":"organic",
+      color:POD_COLORS[n%POD_COLORS.length],sort:n+1,desc:""});
+    ui.podEdit=s.pods[s.pods.length-1].id;render();await saveStruct(m);toast("Pod added");return;}
+  if(t.dataset.podedit){ui.podEdit=ui.podEdit===t.dataset.podedit?null:t.dataset.podedit;ui.confirmDel=null;render();return;}
+  if(t.dataset.podmove){
+    const m=ui.month,s=structOf(m),list=TMModel.sortedPods(s),i=list.findIndex(p=>p.id===t.dataset.podmove),j=i+ +t.dataset.dir;
+    if(i<0||j<0||j>=list.length)return;
+    list.forEach((p,ix)=>{p.sort=ix+1;});
+    const a=list[i].sort;list[i].sort=list[j].sort;list[j].sort=a;
+    render();await saveStruct(m);return;}
+  if(t.dataset.poddel){ui.confirmDel=t.dataset.poddel;render();return;}
+  if(t.dataset.poddelyes){
+    const m=ui.month,s=structOf(m),id=t.dataset.poddelyes;
+    Object.keys(s.bpod).forEach(b=>{if(s.bpod[b]===id)delete s.bpod[b];});
+    Object.keys(s.mpod).forEach(p=>{if(s.mpod[p]===id)delete s.mpod[p];});
+    s.pods=s.pods.filter(p=>p.id!==id);
+    ui.confirmDel=null;ui.podEdit=null;render();await saveStruct(m);toast("Pod deleted — its brands and people are in Unassigned");return;}
+  if(t.id==="copyPrevStruct"){
+    const m=ui.month,pm=shiftMonth(m,-1),prev=smonths[pm];
+    if(!prev||!(prev.pods||[]).length){toast("No structure in "+monthLabel(pm)+".");return;}
+    smonths[m]=plain(prev);ui.podEdit=null;ui.structSel=null;
+    render();await saveStruct(m);toast("Copied the "+monthLabel(pm)+" structure");return;}
   if(t.dataset.bdel||t.dataset.idel){ui.confirmDel=t.dataset.bdel||t.dataset.idel;render();return;}
   if(t.dataset.bdelyes){config.brands=config.brands.filter(x=>x.id!==t.dataset.bdelyes);ui.confirmDel=null;ui.brandSel=null;render();await saveConfig();toast("Brand removed");return;}
   if(t.dataset.idelyes){const b=brandById(t.dataset.b);if(b)b.items=(b.items||[]).filter(x=>x.id!==t.dataset.idelyes);
@@ -992,6 +1318,38 @@ view().addEventListener("change",async e=>{
   if(t.id==="dashPerson"){ui.dashPerson=t.value;render();return;}
   if(t.id==="brandDash"){ui.brandDash=t.value;render();return;}
   if(t.id==="allocPerson"){ui.allocPerson=t.value;render();return;}
+  // ---- structure ----
+  if(t.dataset.stmeta){const m=ui.month,s=structOf(m);s.meta[t.dataset.stmeta]=t.value;await saveStruct(m);return;}
+  if(t.dataset.podname||t.dataset.podtype||t.dataset.podcolor||t.dataset.poddesc){
+    const m=ui.month,s=structOf(m);
+    const id=t.dataset.podname||t.dataset.podtype||t.dataset.podcolor||t.dataset.poddesc;
+    const pod=TMModel.podById(s,id); if(!pod)return;
+    if(t.dataset.podname){const v=t.value.trim();if(!v)return;pod.name=v;}
+    if(t.dataset.podtype)pod.type=t.value;
+    if(t.dataset.podcolor)pod.color=t.value;
+    if(t.dataset.poddesc)pod.desc=t.value;
+    render();await saveStruct(m);return;}
+  if(t.dataset.addbrand){if(!t.value)return;await moveToPod("brand",t.value,t.dataset.addbrand);return;}
+  if(t.dataset.addmember){if(!t.value)return;await moveToPod("member",t.value,t.dataset.addmember);return;}
+  if(t.dataset.owner){
+    const m=ui.month,s=structOf(m),bid=t.dataset.owner;
+    const o=s.own[bid]||{p:"",b:"",pct:TMModel.DEFAULT_OWNER_PCT};
+    if(t.dataset.slot==="pct")o.pct=Math.max(0,Math.min(100,+t.value||0)); else o[t.dataset.slot]=t.value;
+    if(!o.p&&!o.b)delete s.own[bid]; else s.own[bid]=o;
+    render();await saveStruct(m);toast("Owner updated");return;}
+  if(t.dataset.brandfld){const b=brandById(t.dataset.brandfld);if(b){b[t.dataset.sf]=t.value;render();await saveConfig();}return;}
+  if(t.dataset.blist){const b=brandById(t.dataset.blist);if(b){const f=t.dataset.sf,cur=b[f]||[];
+    b[f]=t.checked?[...new Set([...cur,t.value])]:cur.filter(x=>x!==t.value);await saveConfig();}return;}
+  if(t.dataset.memfld){const p=memberById(t.dataset.memfld);if(p){const f=t.dataset.sf;
+    p[f]=f==="active"?t.value==="1":(f==="capacity"?(t.value===""?"":+t.value):t.value);
+    render();await saveConfig();}return;}
+  if(t.dataset.mlist){const p=memberById(t.dataset.mlist);if(p){const f=t.dataset.sf,cur=p[f]||[];
+    p[f]=t.checked?[...new Set([...cur,t.value])]:cur.filter(x=>x!==t.value);await saveConfig();}return;}
+  if(t.dataset.role){
+    const m=ui.month,s=structOf(m),pid=t.dataset.role,cur=TMModel.rolesOf(s,pid);
+    s.roles[pid]=t.checked?[...new Set([...cur,t.value])]:cur.filter(x=>x!==t.value);
+    if(!s.roles[pid].length)delete s.roles[pid];
+    render();await saveStruct(m);return;}
   if(t.dataset.ar){
     const m=ui.month,pid=ui.allocWho,d=ui.adrafts[m+"|"+pid].d,k=t.dataset.ar;
     if(t.checked)d[k]=1; else delete d[k];
@@ -1036,6 +1394,12 @@ view().addEventListener("submit",async e=>{
     if(hasQty&&ui.bdrafts[k])ui.bdrafts[k].d[it.id]=+qty;
     render();await saveConfig();
     toast(hasQty?name+" added. Press Save to keep the quantity.":name+" added");}
+  if(e.target.id==="newBrandS"){const name=document.getElementById("nbName").value.trim();if(!name)return;
+    const b={id:uid("b"),name,items:[],kind:"organic",platforms:[],formats:[],notes:"",active:true};
+    config.brands.push(b);ui.structSel={t:"brand",id:b.id};render();await saveConfig();toast(name+" added");}
+  if(e.target.id==="newMemberS"){const name=document.getElementById("nmName").value.trim();if(!name)return;
+    const p={id:uid("p"),name,level:document.getElementById("nmLevel").value,jobs:[],display:"",skills:[],capacity:"",active:true};
+    config.team.push(p);ui.structSel={t:"member",id:p.id};render();await saveConfig();toast(name+" added");}
 });
 
 // ---------- Downloads ----------

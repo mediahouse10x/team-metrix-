@@ -33,17 +33,32 @@
 var HEAD = {
   // Team Metrics side
   Jobs:       ['id', 'level', 'category', 'job', 'ck'],
-  Team:       ['id', 'name', 'level', 'jobs'],
+  Team:       ['id', 'name', 'level', 'jobs', 'displayName', 'skills', 'capacity', 'active'],
   Settings:   ['key', 'value'],
   Entries:    ['month', 'personId', 'jobId', 'goal', 'actual'],
   // Deliverables side (independent of the four above)
-  Brands:     ['id', 'name'],
+  Brands:     ['id', 'name', 'kind', 'platforms', 'formats', 'notes', 'active'],
   BrandItems: ['brandId', 'itemId', 'name'],
   Plan:       ['month', 'brandId', 'itemId', 'quantity'],
   // Allocation side (reads nothing from the sheet the other sections own)
   AllocTags:  ['brandId', 'itemId', 'ck', 'kind'],
-  Alloc:      ['month', 'brandId', 'itemId', 'personId', 'value']
+  Alloc:      ['month', 'brandId', 'itemId', 'personId', 'value'],
+  // Structure side: one structure per month
+  Pods:        ['month', 'id', 'name', 'type', 'color', 'sortOrder', 'description'],
+  PodBrands:   ['month', 'brandId', 'podId'],
+  PodMembers:  ['month', 'personId', 'podId', 'roles'],
+  BrandOwners: ['month', 'brandId', 'primaryId', 'backupId', 'ownerPct'],
+  StructMeta:  ['month', 'key', 'value']
 };
+
+function listOf(v) {
+  return String(v == null ? '' : v).split(',').map(function (s) { return s.trim(); }).filter(String);
+}
+function boolOf(v) {
+  var s = String(v == null ? '' : v).trim().toLowerCase();
+  return !(s === 'no' || s === 'false' || s === '0');
+}
+function yesNo(b) { return b === false ? 'no' : 'yes'; }
 
 /* ---------------- Web app entry points ---------------- */
 
@@ -76,6 +91,7 @@ function handle(req) {
       case 'saveMonth':  saveMonth(fmtMonth(req.month), req.entries || {}); return { ok: true };
       case 'savePlan':   savePlan(fmtMonth(req.month), req.plan || {}); return { ok: true };
       case 'saveAlloc':  saveAlloc(fmtMonth(req.month), req.alloc || {}); return { ok: true };
+      case 'saveStruct': saveStruct(fmtMonth(req.month), req.struct || {}); return { ok: true };
       case 'ping':       return { ok: true, sheet: SpreadsheetApp.getActiveSpreadsheet().getName() };
       default: throw new Error('Unknown action: ' + req.action);
     }
@@ -94,11 +110,20 @@ function reply(obj) {
 function tab(name) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var s = ss.getSheetByName(name) || ss.insertSheet(name);
+  var head = HEAD[name];
   if (s.getLastRow() === 0) {
-    s.getRange(1, 1, 1, HEAD[name].length).setValues([HEAD[name]]).setFontWeight('bold');
     s.setFrozenRows(1);
-    if (name === 'Entries' || name === 'Plan' || name === 'Alloc') s.getRange('A:A').setNumberFormat('@'); // keep "2026-11" as text
+    if (name === 'Entries' || name === 'Plan' || name === 'Alloc' || name === 'Pods' ||
+        name === 'PodBrands' || name === 'PodMembers' || name === 'BrandOwners' || name === 'StructMeta') {
+      s.getRange('A:A').setNumberFormat('@'); // keep "2026-11" as text
+    }
   }
+  // Keep the header row in step with HEAD, so a sheet made by an older version of this
+  // script picks up new columns instead of silently writing under the wrong headings.
+  var width = Math.max(s.getLastColumn(), head.length);
+  var current = s.getRange(1, 1, 1, width).getValues()[0];
+  var same = current.length >= head.length && head.every(function (h, i) { return String(current[i]) === h; });
+  if (!same) s.getRange(1, 1, 1, head.length).setValues([head]).setFontWeight('bold');
   return s;
 }
 
@@ -138,7 +163,8 @@ function loadAll() {
 
   var team = rowsOf('Team').map(function (r) {
     return { id: String(r[0]), name: String(r[1]), level: String(r[2]) === 'Senior' ? 'Senior' : 'Junior',
-             jobs: String(r[3] == null ? '' : r[3]).split(',').map(function (s) { return s.trim(); }).filter(String) };
+             jobs: listOf(r[3]), display: String(r[4] == null ? '' : r[4]),
+             skills: listOf(r[5]), capacity: num(r[6]), active: boolOf(r[7]) };
   }).filter(function (x) { return x.id; });
 
   var settings = {};
@@ -168,7 +194,10 @@ function loadAll() {
 
   var brands = rowsOf('Brands').map(function (r) {
     var id = String(r[0]).trim();
-    return { id: id, name: String(r[1]), items: itemsByBrand[id] || [] };
+    return { id: id, name: String(r[1]), items: itemsByBrand[id] || [],
+             kind: String(r[2]) === 'ads' ? 'ads' : 'organic',
+             platforms: listOf(r[3]), formats: listOf(r[4]),
+             notes: String(r[5] == null ? '' : r[5]), active: boolOf(r[6]) };
   }).filter(function (x) { return x.id; });
 
   var bmonths = {};
@@ -203,11 +232,50 @@ function loadAll() {
     amonths[m].a[bid + '|' + iid + '|' + pid] = v;
   });
 
+  // ---- structure side: one structure per month ----
+  var smonths = {};
+  function struct(m) {
+    if (!smonths[m]) smonths[m] = { pods: [], bpod: {}, mpod: {}, roles: {}, own: {}, meta: { manager: '', lead: '' } };
+    return smonths[m];
+  }
+  rowsOf('Pods').forEach(function (r) {
+    var m = fmtMonth(r[0]), id = String(r[1]).trim();
+    if (!m || !id) return;
+    struct(m).pods.push({ id: id, name: String(r[2]), type: String(r[3]) || 'organic',
+                          color: String(r[4]) || '#2f6b4f', sort: num(r[5]) || 0, desc: String(r[6] == null ? '' : r[6]) });
+  });
+  rowsOf('PodBrands').forEach(function (r) {
+    var m = fmtMonth(r[0]), bid = String(r[1]).trim(), pid = String(r[2]).trim();
+    if (!m || !bid || !pid) return;
+    struct(m).bpod[bid] = pid;
+  });
+  rowsOf('PodMembers').forEach(function (r) {
+    var m = fmtMonth(r[0]), person = String(r[1]).trim(), pid = String(r[2]).trim();
+    if (!m || !person || !pid) return;
+    struct(m).mpod[person] = pid;
+    var roles = listOf(r[3]);
+    if (roles.length) struct(m).roles[person] = roles;
+  });
+  rowsOf('BrandOwners').forEach(function (r) {
+    var m = fmtMonth(r[0]), bid = String(r[1]).trim();
+    if (!m || !bid) return;
+    var p = String(r[2]).trim(), b = String(r[3]).trim();
+    if (!p && !b) return;
+    var pct = num(r[4]);
+    struct(m).own[bid] = { p: p, b: b, pct: pct === '' ? 40 : pct };
+  });
+  rowsOf('StructMeta').forEach(function (r) {
+    var m = fmtMonth(r[0]), k = String(r[1]).trim();
+    if (!m || !k) return;
+    struct(m).meta[k] = String(r[2] == null ? '' : r[2]);
+  });
+
   return {
     config: { lib: lib, team: team, settings: settings, brands: brands, atags: atags },
     months: months,
     bmonths: bmonths,
-    amonths: amonths
+    amonths: amonths,
+    smonths: smonths
   };
 }
 
@@ -221,13 +289,17 @@ function saveConfig(config) {
   }));
 
   writeRows('Team', team.map(function (p) {
-    return [String(p.id), String(p.name), String(p.level), (p.jobs || []).join(',')];
+    return [String(p.id), String(p.name), String(p.level), (p.jobs || []).join(','),
+            String(p.display || ''), (p.skills || []).join(','), num(p.capacity), yesNo(p.active)];
   }));
 
   writeRows('Settings', Object.keys(settings).map(function (k) { return [k, settings[k]]; }));
 
   var brands = config.brands || [];
-  writeRows('Brands', brands.map(function (b) { return [String(b.id), String(b.name)]; }));
+  writeRows('Brands', brands.map(function (b) {
+    return [String(b.id), String(b.name), b.kind === 'ads' ? 'ads' : 'organic',
+            (b.platforms || []).join(','), (b.formats || []).join(','), String(b.notes || ''), yesNo(b.active)];
+  }));
 
   var items = [];
   brands.forEach(function (b) {
@@ -302,9 +374,47 @@ function saveMonth(month, entries) {
   writeRows('Entries', keep.concat(add));
 }
 
+/** Replace one month's rows in a structure tab, leaving every other month alone. */
+function replaceMonth(name, month, rows) {
+  var keep = rowsOf(name).filter(function (r) { return fmtMonth(r[0]) !== month; })
+    .map(function (r) {
+      var out = [fmtMonth(r[0])];
+      for (var i = 1; i < HEAD[name].length; i++) out.push(r[i] == null ? '' : r[i]);
+      return out;
+    });
+  writeRows(name, keep.concat(rows));
+}
+
+function saveStruct(month, struct) {
+  if (!month) throw new Error('No month given.');
+  var pods = struct.pods || [], bpod = struct.bpod || {}, mpod = struct.mpod || {},
+      roles = struct.roles || {}, own = struct.own || {}, meta = struct.meta || {};
+
+  replaceMonth('Pods', month, pods.map(function (p) {
+    return [month, String(p.id), String(p.name), String(p.type || 'organic'),
+            String(p.color || ''), num(p.sort), String(p.desc || '')];
+  }));
+
+  replaceMonth('PodBrands', month, Object.keys(bpod).filter(function (b) { return bpod[b]; })
+    .map(function (b) { return [month, String(b), String(bpod[b])]; }));
+
+  replaceMonth('PodMembers', month, Object.keys(mpod).filter(function (p) { return mpod[p]; })
+    .map(function (p) { return [month, String(p), String(mpod[p]), (roles[p] || []).join(',')]; }));
+
+  replaceMonth('BrandOwners', month, Object.keys(own).map(function (b) {
+    var o = own[b] || {};
+    return [month, String(b), String(o.p || ''), String(o.b || ''), o.pct == null ? 40 : num(o.pct)];
+  }).filter(function (r) { return r[2] || r[3]; }));
+
+  replaceMonth('StructMeta', month, Object.keys(meta).map(function (k) {
+    return [month, String(k), String(meta[k] == null ? '' : meta[k])];
+  }));
+}
+
 /* ---------------- Run once from the editor if you want the tabs created early ---------------- */
 
 function setup() {
-  ['Jobs', 'Team', 'Settings', 'Entries', 'Brands', 'BrandItems', 'Plan', 'AllocTags', 'Alloc'].forEach(tab);
+  ['Jobs', 'Team', 'Settings', 'Entries', 'Brands', 'BrandItems', 'Plan', 'AllocTags', 'Alloc',
+   'Pods', 'PodBrands', 'PodMembers', 'BrandOwners', 'StructMeta'].forEach(tab);
   SpreadsheetApp.getActiveSpreadsheet().toast('Tabs ready. Now deploy as a web app.');
 }

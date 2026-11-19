@@ -45,6 +45,18 @@ Script-ஏ tab-களை உருவாக்கிக்கும்.
 | `AllocTags` | brandId, itemId, ck (Key/Critical), kind (count/resp) |
 | `Alloc` | month, brandId, itemId, personId, value |
 
+**Structure பகுதி** (மாசம் வாரியா pod அமைப்பு):
+
+| Tab | Columns |
+|---|---|
+| `Pods` | month, id, name, type, color, sortOrder, description |
+| `PodBrands` | month, brandId, podId |
+| `PodMembers` | month, personId, podId, roles |
+| `BrandOwners` | month, brandId, primaryId, backupId, ownerPct |
+| `StructMeta` | month, key, value |
+
+`Team`, `Brands` tab-களுக்கு புது column-கள் சேர்ந்திருக்கு (displayName, skills, capacity, active / kind, platforms, formats, notes, active). புது Code.gs-ஐ deploy பண்ணினா header வரி தானா update ஆகும், பழைய data போகாது.
+
 ஷீட்ல data-வ படிக்கலாம், pivot/chart போடலாம். ஆனா **கையால edit பண்ணாதீங்க** — page-ல இருந்து save ஆகும்போது அந்த tab மறுபடியும் எழுதப்படும். கையால மாத்தினா, page-ல **Reload from sheet** அழுத்தினா அது page-க்கு வரும்.
 
 ## முக்கியமான குறிப்புகள்

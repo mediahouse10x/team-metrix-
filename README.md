@@ -11,7 +11,9 @@ Metrics and Deliverables share nothing. Allocation *reads* the team list and the
 | File | What it is |
 |---|---|
 | `index.html` | The whole app — open it in any browser, no build step, no server |
+| `model.js` | Pure structure rules (pods, owners, validation) — no DOM, so it can be tested on its own |
 | `Code.gs` | Google Apps Script to paste into the sheet (this is the backend) |
+| `tests.html`, `tests/` | The model tests; run them with `node tests/run.js` or open `tests.html` |
 | `Google Sheet setup.md` | Step-by-step setup, in Tamil |
 
 ## Team Metrics
@@ -35,6 +37,23 @@ Quantities are per month, so each month stands on its own and past months stay r
 - **Team load** — pieces split vs planned for the month and what is still unsplit, a per-person table with share, critical count and responsibilities, a bar chart, a per-person breakdown, and a "still to split" table naming every line where the split does not match the plan. Exports to CSV.
 
 The team list comes from Team & Roles and the quantities from the Deliverables plan, so the "still to split" figure is always honest.
+
+## Structure
+
+How the team is organised, one structure per month — the month picker is the structure selector, so November's pods stay November's however you rearrange December.
+
+- **Builder** — pods as colour-headed cards. Drag brand chips and people between pods, or pick them from the "+ Add" selects. Add, rename, recolour, retype, reorder and delete pods (deleting one moves its brands and people to Unassigned). Click a brand to set its primary and backup owner and the owner's time percent; click a person to set display name, seniority, capacity, skills and their roles in the pod. **Load starting structure** fills in the pods from the agency's current setup, matching brands and people by name so nothing is duplicated.
+- **Checks** run live at the top. *Errors* — a brand with no primary owner, an owner outside the brand's pod (floaters excepted), duplicate display names. *Warnings* — a pod with no lead or no senior, someone in no pod, a senior owning more than three brands, and a pod planned past its editing capacity (capacity × (1 − owner time), measured against the pieces the Allocation section has given its members).
+
+Pods, brands, members and roles are all created from the UI — nothing is hard-coded.
+
+### Running the tests
+
+```
+node tests/run.js
+```
+
+The same cases run in a browser at `tests.html`. They cover the lookup helpers (`getActiveStructure`, `getPodForBrand`, `getOwnerForBrand`, `getMembersOfPod`), the capacity maths and every validation rule.
 
 ## Scoring
 

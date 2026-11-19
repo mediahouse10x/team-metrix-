@@ -60,6 +60,14 @@ Everything saves as you change it. Nothing is pre-filled and nothing is hard-cod
 
 Moving a channel or a person between pods drops anyone who no longer belongs, so the structure cannot drift into a state the checks would reject. Channels parked outside every pod keep their setup until they are placed again.
 
+### Workload
+
+The Deliverables plan reaches the pods by itself. Open **Structure → Workload** and every channel that has a planned quantity, sits in a pod and has people on it is shared between those people — evenly, whole pieces, remainder to the first. Channels you have already set by hand are left exactly as they are.
+
+Each pod shows what it has to put out this month, channel by channel and deliverable by deliverable, with what each person is carrying. Every number is an input: change one and it sticks, **Re-split** shares that line out evenly again, and a line that no longer adds up says so (`6 not placed`).
+
+These are the same numbers as Allocation → Split and Team load, not a second copy — change one and the others follow. Channels with a plan but no pod, or no people, are called out at the top.
+
 ### Running the tests
 
 ```

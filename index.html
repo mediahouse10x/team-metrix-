@@ -203,7 +203,8 @@ const VIEWS={
   brands:   {sec:"deliv",  label:"Overview"},
   split:    {sec:"alloc",  label:"Split"},
   load:     {sec:"alloc",  label:"Team load"},
-  pods:     {sec:"struct", label:"Builder"}
+  pods:     {sec:"struct", label:"Builder"},
+  workload: {sec:"struct", label:"Workload"}
 };
 const secOf=v=>(VIEWS[v]||VIEWS.dashboard).sec;
 
@@ -365,7 +366,7 @@ function render(){
   for(const k in charts){charts[k].destroy();delete charts[k];}
   const fn={dashboard:renderDashboard,entry:renderEntry,team:renderTeam,jobs:renderJobs,
             plan:renderPlan,brands:renderBrands,split:renderSplit,load:renderLoad,
-            pods:renderPods}[ui.view]||renderDashboard;
+            pods:renderPods,workload:renderWorkload}[ui.view]||renderDashboard;
   view().innerHTML=connNote()+fn();
   updateBadge();
   if(ui.view==="dashboard")drawDashCharts();
@@ -1166,6 +1167,124 @@ async function moveToPod(kind,id,podId){
   render(); await saveStruct(m);
 }
 
+// ---------- Structure: workload ----------
+// The Deliverables plan reaches the pods on its own. A channel's planned quantity is
+// shared between the people on that channel, and the result is ordinary allocation
+// data — the same numbers Allocation → Team load counts. Anything already set by hand
+// is left alone; only untouched channels are filled in.
+function lineAlloc(m,bid,iid){
+  const a=(amonths[m]&&amonths[m].a)||{}, out={};
+  Object.keys(a).forEach(k=>{const p=k.split("|");if(p[0]===bid&&p[1]===iid)out[p[2]]=+a[k];});
+  return out;
+}
+function setLineAlloc(m,bid,iid,split){
+  amonths[m]=amonths[m]||{a:{}}; amonths[m].a=amonths[m].a||{};
+  const a=amonths[m].a, pre=bid+"|"+iid+"|";
+  Object.keys(a).forEach(k=>{if(k.indexOf(pre)===0)delete a[k];});
+  Object.keys(split).forEach(pid=>{if(+split[pid]>0)a[pre+pid]=+split[pid];});
+}
+function autoFillWorkload(m){
+  const s=structOf(m); let filled=0;
+  config.brands.forEach(b=>{
+    if(!s.bpod[b.id])return;
+    const crew=TMModel.peopleOnBrand(s,b.id); if(!crew.length)return;
+    (b.items||[]).forEach(i=>{
+      if(tagOf(b.id,i.id).kind!=="count")return;
+      const q=planQty(m,b.id,i.id); if(!q)return;
+      if(Object.keys(lineAlloc(m,b.id,i.id)).length)return;  // already decided
+      setLineAlloc(m,b.id,i.id,TMModel.splitEvenly(q,crew));
+      filled++;
+    });
+  });
+  return filled;
+}
+function podWorkload(m){
+  const s=structOf(m);
+  return TMModel.sortedPods(s).map(pod=>{
+    const brands=config.brands.filter(b=>s.bpod[b.id]===pod.id);
+    const people=config.team.filter(p=>s.mpod[p.id]===pod.id);
+    const channels=brands.map(b=>{
+      const crew=TMModel.peopleOnBrand(s,b.id);
+      const items=(b.items||[]).filter(i=>tagOf(b.id,i.id).kind==="count"&&planQty(m,b.id,i.id))
+        .map(i=>{
+          const planned=planQty(m,b.id,i.id), split=lineAlloc(m,b.id,i.id);
+          const given=Object.keys(split).reduce((t,k)=>t+split[k],0);
+          return {i,planned,split,given,gap:planned-given};
+        });
+      return {b,crew,items,planned:items.reduce((t,x)=>t+x.planned,0),given:items.reduce((t,x)=>t+x.given,0)};
+    });
+    const per={};
+    channels.forEach(c=>c.items.forEach(x=>Object.keys(x.split).forEach(pid=>{per[pid]=(per[pid]||0)+x.split[pid];})));
+    return {pod,people,channels,per,
+      planned:channels.reduce((t,c)=>t+c.planned,0),
+      given:channels.reduce((t,c)=>t+c.given,0)};
+  });
+}
+
+function renderWorkload(){
+  const m=ui.month, s=structOf(m);
+  const filled=autoFillWorkload(m);
+  if(filled){ saveAllocMonth(m); setTimeout(()=>toast(`Filled ${filled} channel${filled===1?"":"s"} from the structure`),80); }
+  const board=podWorkload(m);
+  if(!s.pods.length)return `<div class="card empty"><h2>No pods yet</h2><p>Build the pods in <a href="#pods">Builder</a> first, then the plan lands on them here.</p></div>`;
+  const planned=board.reduce((t,x)=>t+x.planned,0), given=board.reduce((t,x)=>t+x.given,0);
+  const orphans=config.brands.filter(b=>!s.bpod[b.id]&&(b.items||[]).some(i=>planQty(m,b.id,i.id)));
+  const crewless=config.brands.filter(b=>s.bpod[b.id]&&!TMModel.peopleOnBrand(s,b.id).length&&(b.items||[]).some(i=>planQty(m,b.id,i.id)));
+  return `
+  <div class="row between"><h1 style="font-size:22px">${esc(monthLabel(m))} workload</h1>
+    <span class="muted small">Straight from the Deliverables plan, shared between the people on each channel.</span></div>
+  <div class="tiles">
+    <div class="tile t-acc"><div class="l">Pieces this month</div><div class="v num">${planned||"–"}</div></div>
+    <div class="tile ${planned&&given===planned?"t-epi":"t-mpi"}"><div class="l">Placed on people</div><div class="v num">${given||"–"}</div></div>
+    <div class="tile"><div class="l">Pods</div><div class="v num">${board.length}</div></div>
+    <div class="tile ${orphans.length||crewless.length?"t-low":""}"><div class="l">Channels not covered</div><div class="v num">${orphans.length+crewless.length||"–"}</div></div>
+  </div>
+  ${orphans.length||crewless.length?`<div class="card" style="border-color:var(--low)">
+    <h2>These channels have a plan but nobody to do it</h2>
+    ${orphans.map(b=>`<div class="issue"><span class="err">No pod</span> ${esc(b.name)} is not in any pod — <a href="#pods">put it in one</a>.</div>`).join("")}
+    ${crewless.map(b=>`<div class="issue"><span class="err">No people</span> ${esc(b.name)} has nobody on it — <a href="#pods">open its pod and tick who works on it</a>.</div>`).join("")}
+  </div>`:""}
+  ${board.map(x=>podWorkCard(m,x)).join("")}
+  <p class="muted small">These are the same numbers as <a href="#split">Allocation → Split</a> and <a href="#load">Team load</a> — changing one changes the other. Change the plan in <a href="#plan">Deliverables</a> and press <b>Re-split</b> to take the new number.</p>`;
+}
+
+function podWorkCard(m,x){
+  const people=x.people, done=x.planned&&x.given===x.planned;
+  return `
+  <div class="card">
+    <div class="row between">
+      <h2><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${esc(x.pod.color||"#2f6b4f")};margin-right:7px"></span>${esc(x.pod.name)}</h2>
+      <span class="small ${done?"":"muted"}" style="${done?"color:var(--epi);font-weight:700":""}">${x.planned?`${x.given} of ${x.planned} pieces placed`:"nothing planned"}</span>
+    </div>
+    ${x.channels.length?x.channels.map(c=>`
+      <div class="line">
+        <div class="row between">
+          <div><b>${esc(c.b.name)}</b> <span class="muted small">${c.crew.length?c.crew.map(pid=>{const p=memberById(pid);return p?esc(TMModel.displayNameOf(p)):"";}).filter(Boolean).join(", "):"nobody on it"}</span></div>
+          <span class="muted small num">${c.planned} planned</span>
+        </div>
+        ${c.items.length?c.items.map(it=>`
+          <div style="margin-top:10px">
+            <div class="row between">
+              <span class="small"><b>${esc(it.i.name)}</b> <span class="muted">· ${it.planned} to deliver</span></span>
+              <div class="row">${it.gap?`<span class="lineinfo ${it.gap>0?"under":"over"}">${it.gap>0?it.gap+" not placed":Math.abs(it.gap)+" over"}</span>`:`<span class="lineinfo ok">all placed</span>`}
+                ${c.crew.length?`<button class="ghost" data-resplit="${c.b.id}|${it.i.id}">Re-split</button>`:""}</div>
+            </div>
+            <div class="agrid">
+              ${c.crew.map(pid=>{const p=memberById(pid);if(!p)return "";
+                return `<label for="wl-${c.b.id}-${it.i.id}-${pid}"><span>${esc(TMModel.displayNameOf(p))}</span>
+                  <input type="number" min="0" step="1" inputmode="numeric" id="wl-${c.b.id}-${it.i.id}-${pid}" data-wl="${c.b.id}|${it.i.id}|${pid}" value="${it.split[pid]??""}" aria-label="${esc(TMModel.displayNameOf(p))} ${esc(it.i.name)}"></label>`;}).join("")}
+            </div>
+          </div>`).join("")
+          :`<p class="muted small" style="margin:8px 0 0">Nothing planned for this channel in ${esc(monthLabel(m))}.</p>`}
+      </div>`).join("")
+      :`<div class="empty">No channels in this pod.</div>`}
+    ${people.length?`<div class="sublab">What each person carries</div>
+      <div class="chips">${people.map(p=>`<span class="chip"><b>${esc(TMModel.displayNameOf(p))}</b><span class="own">${x.per[p.id]||0}</span></span>`).join("")}
+      ${Object.keys(x.per).filter(pid=>!people.some(p=>p.id===pid)).map(pid=>{const p=memberById(pid);
+        return p?`<span class="chip" title="From another pod"><b>${esc(TMModel.displayNameOf(p))}</b><span class="own">${x.per[pid]} · floater</span></span>`:"";}).join("")}</div>`:""}
+  </div>`;
+}
+
 // ---------- Events ----------
 function go(){const h=location.hash.slice(1);ui.view=VIEWS[h]?h:"dashboard";ui.confirmDel=null;render();}
 window.addEventListener("hashchange",go);
@@ -1220,6 +1339,11 @@ view().addEventListener("click",async e=>{
     render(); toast(`Gave ${left} more. Press Save to keep it.`); return;
   }
   if(t.id==="exportAllocCsv"){await exportAllocCSV();return;}
+  if(t.dataset.resplit){
+    const m=ui.month,s=structOf(m),p=t.dataset.resplit.split("|"),bid=p[0],iid=p[1];
+    const crew=TMModel.peopleOnBrand(s,bid), q=planQty(m,bid,iid)||0;
+    setLineAlloc(m,bid,iid,TMModel.splitEvenly(q,crew));
+    render();await saveAllocMonth(m);toast(`Shared ${q} across ${crew.length} ${crew.length===1?"person":"people"}`);return;}
   // ---- structure ----
   if(t.id==="addPod"){
     const m=ui.month,s=structOf(m),n=s.pods.length;
@@ -1310,6 +1434,11 @@ view().addEventListener("change",async e=>{
   if(t.id==="dashPerson"){ui.dashPerson=t.value;render();return;}
   if(t.id==="brandDash"){ui.brandDash=t.value;render();return;}
   if(t.id==="allocPerson"){ui.allocPerson=t.value;render();return;}
+  if(t.dataset.wl){
+    const m=ui.month,k=t.dataset.wl;
+    amonths[m]=amonths[m]||{a:{}}; amonths[m].a=amonths[m].a||{};
+    if(t.value===""||+t.value<=0)delete amonths[m].a[k]; else amonths[m].a[k]=+t.value;
+    render();await saveAllocMonth(m);return;}
   // ---- structure ----
   if(t.dataset.stmeta){const m=ui.month,s=structOf(m);s.meta[t.dataset.stmeta]=t.value;await saveStruct(m);return;}
   if(t.dataset.podname||t.dataset.podtype||t.dataset.podcolor||t.dataset.poddesc){

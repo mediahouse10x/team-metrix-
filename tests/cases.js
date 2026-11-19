@@ -134,6 +134,31 @@
       eq(w.length, 0, "one-person warnings");
     });
 
+    // ---- sharing a channel's goal ----
+    check("splitEvenly divides a goal across the crew", function () {
+      eq(M.splitEvenly(60, ["a", "b", "c"]), { a: 20, b: 20, c: 20 }, "even split");
+    });
+    check("splitEvenly gives the remainder to the first people", function () {
+      eq(M.splitEvenly(10, ["a", "b", "c"]), { a: 4, b: 3, c: 3 }, "split of ten over three");
+    });
+    check("the parts of a split always add back up", function () {
+      [1, 7, 13, 100, 251].forEach(function (total) {
+        [1, 2, 3, 4, 7].forEach(function (n) {
+          var people = []; for (var i = 0; i < n; i++) people.push("p" + i);
+          var s = M.splitEvenly(total, people), sum = 0;
+          Object.keys(s).forEach(function (k) { sum += s[k]; });
+          if (sum !== total) throw new Error(total + " over " + n + " people summed to " + sum);
+        });
+      });
+    });
+    check("splitEvenly with nobody or nothing gives nothing", function () {
+      eq(M.splitEvenly(50, []), {}, "no people");
+      eq(M.splitEvenly(0, ["a"]), {}, "no goal");
+    });
+    check("splitEvenly never hands anyone a zero", function () {
+      eq(M.splitEvenly(2, ["a", "b", "c"]), { a: 1, b: 1 }, "two pieces over three people");
+    });
+
     // ---- capacity ----
     check("editingCapacity takes owner time off the top", function () {
       eq(M.editingCapacity(team[0], struct()), 60, "Basha at 40% owner time");

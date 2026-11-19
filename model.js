@@ -114,6 +114,21 @@
     return peopleOnBrand(getActiveStructure(smonths, month), brandId);
   }
 
+  /**
+   * Share a channel's planned quantity across the people on it. Whole pieces only,
+   * remainders going to the first in the list, so the parts always add back up.
+   */
+  function splitEvenly(total, people) {
+    var out = {}, n = (people || []).length, t = Math.max(0, Math.round(+total || 0));
+    if (!n || !t) return out;
+    var base = Math.floor(t / n), extra = t - base * n;
+    people.forEach(function (p, i) {
+      var q = base + (i < extra ? 1 : 0);
+      if (q > 0) out[p] = q;
+    });
+    return out;
+  }
+
   function rolesOf(struct, personId) {
     var r = struct.roles[personId];
     return Array.isArray(r) ? r : [];
@@ -246,6 +261,7 @@
     getMembersOfPod: getMembersOfPod,
     getBrandTeam: getBrandTeam,
     peopleOnBrand: peopleOnBrand,
+    splitEvenly: splitEvenly,
     brandsWorkedOn: brandsWorkedOn,
     brandsOfPod: brandsOfPod,
     sortedPods: sortedPods,

@@ -92,7 +92,7 @@ td.r,th.r{text-align:right}
 .seg button[aria-pressed="true"]{background:var(--surface);color:var(--accent)}
 .share{height:8px;border-radius:99px;background:var(--bg);overflow:hidden;min-width:70px}
 .share span{display:block;height:100%;border-radius:99px;background:var(--accent)}
-.delrow{display:grid;grid-template-columns:1fr 110px auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.delrow{display:grid;grid-template-columns:1fr 78px 78px 72px auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
 .delrow:last-of-type{border-bottom:none}
 .tag{display:inline-block;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px}
 .agrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:8px;margin-top:8px}
@@ -272,7 +272,7 @@ function normalizeConfig(c){
           team:(c&&Array.isArray(c.team))?c.team.map(p=>({id:p.id,name:p.name,level:p.level==="Senior"?"Senior":"Junior",jobs:p.jobs||[],
                  display:p.display||"",skills:p.skills||[],capacity:p.capacity==null?"":+p.capacity||"",active:p.active!==false})):[],
           settings:Object.assign({},d.settings,(c&&c.settings)||{}),
-          brands:(c&&Array.isArray(c.brands))?c.brands.map(b=>({id:b.id,name:b.name,items:(b.items||[]).map(i=>({id:i.id,name:i.name})),
+          brands:(c&&Array.isArray(c.brands))?c.brands.map(b=>({id:b.id,name:b.name,items:(b.items||[]).map(i=>({id:i.id,name:i.name,hours:i.hours==null?"":+i.hours||""})),
                    kind:b.kind||"organic",platforms:b.platforms||[],formats:b.formats||[],notes:b.notes||"",active:b.active!==false})):[],
           atags:(c&&c.atags&&typeof c.atags==="object")?c.atags:{}};
 }
@@ -562,6 +562,19 @@ const canon=o=>JSON.stringify(Object.keys(o).sort().map(k=>[k,o[k]]));
 function planQty(m,bid,iid){const v=bmonths[m]&&bmonths[m].q&&bmonths[m].q[bid]?bmonths[m].q[bid][iid]:undefined;return(v===""||v==null)?null:+v;}
 function brandRows(b,m){return (b.items||[]).map(i=>({i,qty:planQty(m,b.id,i.id)}));}
 function brandTotal(b,m){return brandRows(b,m).reduce((t,r)=>t+(r.qty||0),0);}
+const r1=n=>Math.round(n*10)/10;
+const hrsWord=n=>n+(n===1?" hr":" hrs");
+function itemOf(bid,iid){const b=brandById(bid);return b?(b.items||[]).find(i=>i.id===iid):null;}
+function brandHours(b,m){return r1((b.items||[]).reduce((t,i)=>t+TMModel.hoursFor(planQty(m,b.id,i.id),i.hours),0));}
+// Hours a person is carrying this month: their allocated pieces times what each piece takes.
+function hoursForPerson(m,pid){
+  const a=(amonths[m]&&amonths[m].a)||{}; let h=0;
+  Object.keys(a).forEach(k=>{
+    const p=k.split("|"); if(p[2]!==pid)return;
+    const it=itemOf(p[0],p[1]); if(it)h+=TMModel.hoursFor(a[k],it.hours);
+  });
+  return r1(h);
+}
 function planBoard(m){
   return config.brands.map(b=>({b,rows:brandRows(b,m),total:brandTotal(b,m)})).sort((x,y)=>y.total-x.total);
 }
@@ -591,6 +604,7 @@ function renderPlan(){
   if(!dr||(dr.base!==sj&&canon(dr.d)===dr.base))ui.bdrafts[dkey]={base:sj,d:Object.assign({},saved)};
   const d=ui.bdrafts[dkey].d, dirty=canon(d)!==sj;
   const total=Object.values(d).reduce((t,v)=>t+(+v||0),0);
+  const totalHrs=Math.round((b.items||[]).reduce((t,i)=>t+TMModel.hoursFor(d[i.id],i.hours),0)*10)/10;
   const names=[...new Set(config.brands.flatMap(x=>(x.items||[]).map(i=>i.name)))].sort();
   return `
   <div class="row between"><h1 style="font-size:22px">Deliverables plan · ${esc(monthLabel(m))}</h1>
@@ -605,15 +619,18 @@ function renderPlan(){
     <div class="card">
       <div class="row between">
         <div class="row"><input type="text" id="bname-${b.id}" data-bname="${b.id}" value="${esc(b.name)}" aria-label="Brand name" style="font-weight:700;font-size:16px;width:230px">
-          <span class="tag num" id="planTotal">${total} this month</span></div>
+          <span class="tag num" id="planTotal">${total} pieces${totalHrs?" · "+totalHrs+" hrs":""}</span></div>
         ${ui.confirmDel===b.id?`<div class="row"><span class="small">Remove ${esc(b.name)} and its deliverables?</span><button class="danger" data-bdelyes="${b.id}">Remove</button><button class="ghost" data-delno="1">Cancel</button></div>`
           :`<div class="row"><button id="copyPrevPlan">Copy from ${esc(monthLabel(shiftMonth(m,-1)))}</button><button class="primary" id="savePlan" ${dirty?"":"disabled"}>${dirty?"Save":"Saved"}</button><button class="ghost danger" data-bdel="${b.id}">Remove brand</button></div>`}
       </div>
       ${(b.items&&b.items.length)?`<div style="margin-top:14px">
-        <div class="delrow" style="border-bottom:1px solid var(--line)"><div class="small muted" style="text-transform:uppercase;letter-spacing:.04em;font-weight:600">Deliverable</div><div class="small muted r" style="text-align:right;text-transform:uppercase;letter-spacing:.04em;font-weight:600">Qty</div><div></div></div>
+        <div class="delrow" style="border-bottom:1px solid var(--line)">
+          ${["Deliverable","Qty","Hrs each","Hours"].map((h,ix)=>`<div class="small muted" style="text-transform:uppercase;letter-spacing:.04em;font-weight:600;${ix?"text-align:right":""}">${h}</div>`).join("")}<div></div></div>
         ${b.items.map(i=>`<div class="delrow">
           <div><input type="text" id="iname-${i.id}" data-iname="${i.id}" data-b="${b.id}" value="${esc(i.name)}" aria-label="Deliverable name" style="width:100%"></div>
           <div><input class="cell num" type="number" min="0" step="1" inputmode="numeric" id="q-${i.id}" data-q="${i.id}" value="${d[i.id]??""}" aria-label="${esc(i.name)} quantity" style="width:100%"></div>
+          <div><input class="cell num" type="number" min="0" step="0.25" inputmode="decimal" id="ih-${i.id}" data-ih="${i.id}" data-b="${b.id}" value="${i.hours??""}" aria-label="${esc(i.name)} hours per piece" style="width:100%"></div>
+          <div class="num small" id="lh-${i.id}" style="text-align:right;font-weight:700">${TMModel.hoursFor(d[i.id],i.hours)||"–"}</div>
           <div>${ui.confirmDel===i.id?`<button class="danger" data-idelyes="${i.id}" data-b="${b.id}">Delete</button> <button class="ghost" data-delno="1">Cancel</button>`:`<button class="ghost danger" data-idel="${i.id}">Remove</button>`}</div>
         </div>`).join("")}
       </div>`:`<div class="empty">No deliverables for ${esc(b.name)} yet. Add the first one below.</div>`}
@@ -621,9 +638,10 @@ function renderPlan(){
         <input type="text" id="newItem" list="itemnames" placeholder="Deliverable, e.g. Ads" required aria-label="Deliverable name" style="flex:1;min-width:160px">
         <datalist id="itemnames">${names.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
         <input class="cell num" type="number" id="newItemQty" min="0" step="1" inputmode="numeric" placeholder="Qty" aria-label="Quantity">
+        <input class="cell num" type="number" id="newItemHrs" min="0" step="0.25" inputmode="decimal" placeholder="Hrs each" aria-label="Hours per piece">
         <button class="primary" type="submit">Add deliverable</button>
       </form>
-      <p class="muted small" style="margin:10px 0 0">Quantities are per month. Deliverable names are shared across brands in the overview, so keep the spelling the same (Ads, Story, Carousel…).</p>
+      <p class="muted small" style="margin:10px 0 0">Quantities are per month; <b>Hrs each</b> is how long one piece takes and carries over month to month. Deliverable names are shared across brands in the overview, so keep the spelling the same (Ads, Story, Carousel…).</p>
     </div>
   </div>`;
 }
@@ -633,6 +651,7 @@ function renderBrands(){
   const m=ui.month, board=planBoard(m), types=typeTotals(m);
   if(!config.brands.length)return `<div class="card empty"><h2>No brands yet</h2><p>Add brands and their deliverables in <a href="#plan">Plan</a>.</p></div>`;
   const grand=board.reduce((t,x)=>t+x.total,0), active=board.filter(x=>x.total>0).length, top=board[0];
+  const grandHrs=r1(config.brands.reduce((t,b)=>t+brandHours(b,m),0));
   if(!ui.brandDash||!config.brands.some(b=>b.id===ui.brandDash))ui.brandDash=(top&&top.b.id)||config.brands[0].id;
   const sel=brandById(ui.brandDash), selRows=brandRows(sel,m).filter(r=>r.qty), selTotal=brandTotal(sel,m);
   return `
@@ -641,14 +660,15 @@ function renderBrands(){
   <div class="tiles">
     <div class="tile t-acc"><div class="l">Total deliverables</div><div class="v num">${grand||"–"}</div></div>
     <div class="tile t-epi"><div class="l">Brands</div><div class="v num">${active}</div></div>
-    <div class="tile t-mpi"><div class="l">Deliverable types</div><div class="v num">${types.length}</div></div>
+    <div class="tile t-mpi"><div class="l">Hours of work</div><div class="v num">${grandHrs||"–"}</div></div>
+    <div class="tile"><div class="l">Deliverable types</div><div class="v num">${types.length}</div></div>
     <div class="tile t-lpi"><div class="l">Biggest brand</div><div class="v" style="font-size:20px;padding-top:6px">${grand?esc(top.b.name)+' <span class="num muted">'+top.total+'</span>':"–"}</div></div>
   </div>
   <div class="grid2">
     <div class="card"><h2>By brand</h2>
-      <div class="tablewrap"><table><thead><tr><th>#</th><th>Brand</th><th class="r">Types</th><th class="r">Total</th><th></th><th class="r">Share</th></tr></thead><tbody>
+      <div class="tablewrap"><table><thead><tr><th>#</th><th>Brand</th><th class="r">Types</th><th class="r">Total</th><th class="r">Hours</th><th></th><th class="r">Share</th></tr></thead><tbody>
       ${board.map((x,n)=>`<tr><td class="num muted">${x.total?n+1:"–"}</td><td><button class="linkbtn" data-bdash="${x.b.id}">${esc(x.b.name)}</button></td>
-        <td class="r num">${x.rows.filter(r=>r.qty).length}</td><td class="r num"><b>${x.total||"–"}</b></td>
+        <td class="r num">${x.rows.filter(r=>r.qty).length}</td><td class="r num"><b>${x.total||"–"}</b></td><td class="r num">${brandHours(x.b,m)||"–"}</td>
         <td style="width:80px">${grand?`<div class="share" aria-hidden="true"><span style="width:${Math.round(x.total/grand*100)}%"></span></div>`:""}</td>
         <td class="r num muted">${grand?Math.round(x.total/grand*100)+"%":"–"}</td></tr>`).join("")}
       </tbody></table></div>
@@ -665,9 +685,9 @@ function renderBrands(){
     <div class="card">
       <div class="row between"><h2>Brand detail</h2>
         <label class="row small" for="brandDash">Brand <select id="brandDash">${config.brands.map(x=>`<option value="${x.id}" ${x.id===sel.id?"selected":""}>${esc(x.name)}</option>`).join("")}</select></label></div>
-      ${selRows.length?`<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>Deliverable</th><th class="r">Qty</th><th class="r">Share</th></tr></thead><tbody>
-        ${selRows.map(r=>`<tr><td><b>${esc(r.i.name)}</b></td><td class="r num">${r.qty}</td><td class="r num muted">${Math.round(r.qty/selTotal*100)}%</td></tr>`).join("")}
-        <tr><td><b>Total</b></td><td class="r num"><b>${selTotal}</b></td><td></td></tr>
+      ${selRows.length?`<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>Deliverable</th><th class="r">Qty</th><th class="r">Hrs each</th><th class="r">Hours</th><th class="r">Share</th></tr></thead><tbody>
+        ${selRows.map(r=>`<tr><td><b>${esc(r.i.name)}</b></td><td class="r num">${r.qty}</td><td class="r num muted">${r.i.hours||"–"}</td><td class="r num">${TMModel.hoursFor(r.qty,r.i.hours)||"–"}</td><td class="r num muted">${Math.round(r.qty/selTotal*100)}%</td></tr>`).join("")}
+        <tr><td><b>Total</b></td><td class="r num"><b>${selTotal}</b></td><td></td><td class="r num"><b>${brandHours(sel,m)||"–"}</b></td><td></td></tr>
       </tbody></table></div>`:`<div class="empty">Nothing planned for ${esc(sel.name)} in ${esc(monthLabel(m))}.</div>`}
     </div>
   </div>`;
@@ -934,9 +954,9 @@ function structOf(m){
   if(!s.meta)s.meta={manager:"",lead:""};
   return s;
 }
-function piecesFor(m,pid){ const p=memberById(pid); return p?personLoad(m,p).qty:0; }
 function structIssues(m){
-  return TMModel.validate({struct:structOf(m),brands:config.brands,team:config.team,loadFor:pid=>piecesFor(m,pid)});
+  // capacity is in hours, so the load compared against it is hours too
+  return TMModel.validate({struct:structOf(m),brands:config.brands,team:config.team,loadFor:pid=>hoursForPerson(m,pid)});
 }
 // After a move, drop anyone who no longer belongs: a channel's crew and owners must sit
 // in that channel's pod, or be floaters. Brands left Unassigned keep theirs.
@@ -1085,7 +1105,7 @@ function renderPodEditor(m){
         <div class="row between">
           <div class="row"><b>${esc(TMModel.displayNameOf(p))}</b>
             <select data-memfld="${p.id}" data-sf="level" aria-label="${esc(p.name)} seniority"><option ${p.level==="Junior"?"selected":""}>Junior</option><option ${p.level==="Senior"?"selected":""}>Senior</option></select>
-            <input type="number" class="cell num" data-memfld="${p.id}" data-sf="capacity" min="0" step="1" value="${p.capacity??""}" placeholder="capacity" aria-label="${esc(p.name)} monthly capacity" style="width:92px">
+            <input type="number" class="cell num" data-memfld="${p.id}" data-sf="capacity" min="0" step="1" value="${p.capacity??""}" placeholder="hrs/month" aria-label="${esc(p.name)} monthly capacity in hours" style="width:96px">
           </div>
           <span class="muted small">owns ${TMModel.brandsOwnedBy(s,p.id).length} · works on ${TMModel.brandsWorkedOn(s,p.id).length}</span>
         </div>
@@ -1209,15 +1229,21 @@ function podWorkload(m){
         .map(i=>{
           const planned=planQty(m,b.id,i.id), split=lineAlloc(m,b.id,i.id);
           const given=Object.keys(split).reduce((t,k)=>t+split[k],0);
-          return {i,planned,split,given,gap:planned-given};
+          return {i,planned,split,given,gap:planned-given,hours:TMModel.hoursFor(planned,i.hours)};
         });
-      return {b,crew,items,planned:items.reduce((t,x)=>t+x.planned,0),given:items.reduce((t,x)=>t+x.given,0)};
+      return {b,crew,items,planned:items.reduce((t,x)=>t+x.planned,0),
+        given:items.reduce((t,x)=>t+x.given,0),hours:r1(items.reduce((t,x)=>t+x.hours,0))};
     });
-    const per={};
-    channels.forEach(c=>c.items.forEach(x=>Object.keys(x.split).forEach(pid=>{per[pid]=(per[pid]||0)+x.split[pid];})));
-    return {pod,people,channels,per,
+    const per={}, perH={};
+    channels.forEach(c=>c.items.forEach(x=>Object.keys(x.split).forEach(pid=>{
+      per[pid]=(per[pid]||0)+x.split[pid];
+      perH[pid]=r1((perH[pid]||0)+TMModel.hoursFor(x.split[pid],x.i.hours));
+    })));
+    const capacity=r1(people.reduce((t,p)=>t+TMModel.editingCapacity(p,s),0));
+    return {pod,people,channels,per,perH,capacity,
       planned:channels.reduce((t,c)=>t+c.planned,0),
-      given:channels.reduce((t,c)=>t+c.given,0)};
+      given:channels.reduce((t,c)=>t+c.given,0),
+      hours:r1(channels.reduce((t,c)=>t+c.hours,0))};
   });
 }
 
@@ -1228,6 +1254,7 @@ function renderWorkload(){
   const board=podWorkload(m);
   if(!s.pods.length)return `<div class="card empty"><h2>No pods yet</h2><p>Build the pods in <a href="#pods">Builder</a> first, then the plan lands on them here.</p></div>`;
   const planned=board.reduce((t,x)=>t+x.planned,0), given=board.reduce((t,x)=>t+x.given,0);
+  const hours=r1(board.reduce((t,x)=>t+x.hours,0)), capacity=r1(board.reduce((t,x)=>t+x.capacity,0));
   const orphans=config.brands.filter(b=>!s.bpod[b.id]&&(b.items||[]).some(i=>planQty(m,b.id,i.id)));
   const crewless=config.brands.filter(b=>s.bpod[b.id]&&!TMModel.peopleOnBrand(s,b.id).length&&(b.items||[]).some(i=>planQty(m,b.id,i.id)));
   return `
@@ -1235,8 +1262,10 @@ function renderWorkload(){
     <span class="muted small">Straight from the Deliverables plan, shared between the people on each channel.</span></div>
   <div class="tiles">
     <div class="tile t-acc"><div class="l">Pieces this month</div><div class="v num">${planned||"–"}</div></div>
+    <div class="tile t-mpi"><div class="l">Hours of work</div><div class="v num">${hours||"–"}</div></div>
+    <div class="tile ${capacity?(hours>capacity?"t-low":"t-epi"):""}"><div class="l">Team capacity</div><div class="v num">${capacity||"–"}</div>
+      ${capacity?`<div class="l" style="margin-top:2px">${hrsWord(hours>capacity?r1(hours-capacity):r1(capacity-hours))+(hours>capacity?" short":" spare")}</div>`:`<div class="l" style="margin-top:2px">set hours per person</div>`}</div>
     <div class="tile ${planned&&given===planned?"t-epi":"t-mpi"}"><div class="l">Placed on people</div><div class="v num">${given||"–"}</div></div>
-    <div class="tile"><div class="l">Pods</div><div class="v num">${board.length}</div></div>
     <div class="tile ${orphans.length||crewless.length?"t-low":""}"><div class="l">Channels not covered</div><div class="v num">${orphans.length+crewless.length||"–"}</div></div>
   </div>
   ${orphans.length||crewless.length?`<div class="card" style="border-color:var(--low)">
@@ -1245,7 +1274,7 @@ function renderWorkload(){
     ${crewless.map(b=>`<div class="issue"><span class="err">No people</span> ${esc(b.name)} has nobody on it — <a href="#pods">open its pod and tick who works on it</a>.</div>`).join("")}
   </div>`:""}
   ${board.map(x=>podWorkCard(m,x)).join("")}
-  <p class="muted small">These are the same numbers as <a href="#split">Allocation → Split</a> and <a href="#load">Team load</a> — changing one changes the other. Change the plan in <a href="#plan">Deliverables</a> and press <b>Re-split</b> to take the new number.</p>`;
+  <p class="muted small">Hours come from <b>Hrs each</b> on every deliverable in <a href="#plan">Deliverables → Plan</a>, and capacity from each person's <b>hrs/month</b> in <a href="#pods">Builder</a> (less their owner time). The piece counts are the same numbers as <a href="#split">Allocation → Split</a> and <a href="#load">Team load</a> — changing one changes the other. Change the plan and press <b>Re-split</b> to take the new number.</p>`;
 }
 
 function podWorkCard(m,x){
@@ -1254,18 +1283,22 @@ function podWorkCard(m,x){
   <div class="card">
     <div class="row between">
       <h2><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${esc(x.pod.color||"#2f6b4f")};margin-right:7px"></span>${esc(x.pod.name)}</h2>
-      <span class="small ${done?"":"muted"}" style="${done?"color:var(--epi);font-weight:700":""}">${x.planned?`${x.given} of ${x.planned} pieces placed`:"nothing planned"}</span>
+      <div class="row">
+        <span class="small ${done?"":"muted"}" style="${done?"color:var(--epi);font-weight:700":""}">${x.planned?`${x.given} of ${x.planned} pieces placed`:"nothing planned"}</span>
+        ${x.hours?`<span class="tag num">${x.hours} hrs${x.capacity?" of "+x.capacity:""}</span>`:""}
+        ${x.capacity&&x.hours>x.capacity?`<span class="lineinfo over">${hrsWord(r1(x.hours-x.capacity))} over</span>`:""}
+      </div>
     </div>
     ${x.channels.length?x.channels.map(c=>`
       <div class="line">
         <div class="row between">
           <div><b>${esc(c.b.name)}</b> <span class="muted small">${c.crew.length?c.crew.map(pid=>{const p=memberById(pid);return p?esc(TMModel.displayNameOf(p)):"";}).filter(Boolean).join(", "):"nobody on it"}</span></div>
-          <span class="muted small num">${c.planned} planned</span>
+          <span class="muted small num">${c.planned} planned${c.hours?" · "+c.hours+" hrs":""}</span>
         </div>
         ${c.items.length?c.items.map(it=>`
           <div style="margin-top:10px">
             <div class="row between">
-              <span class="small"><b>${esc(it.i.name)}</b> <span class="muted">· ${it.planned} to deliver</span></span>
+              <span class="small"><b>${esc(it.i.name)}</b> <span class="muted">· ${it.planned} to deliver${it.i.hours?` · ${it.i.hours} hrs each · ${it.hours} hrs`:""}</span></span>
               <div class="row">${it.gap?`<span class="lineinfo ${it.gap>0?"under":"over"}">${it.gap>0?it.gap+" not placed":Math.abs(it.gap)+" over"}</span>`:`<span class="lineinfo ok">all placed</span>`}
                 ${c.crew.length?`<button class="ghost" data-resplit="${c.b.id}|${it.i.id}">Re-split</button>`:""}</div>
             </div>
@@ -1279,9 +1312,11 @@ function podWorkCard(m,x){
       </div>`).join("")
       :`<div class="empty">No channels in this pod.</div>`}
     ${people.length?`<div class="sublab">What each person carries</div>
-      <div class="chips">${people.map(p=>`<span class="chip"><b>${esc(TMModel.displayNameOf(p))}</b><span class="own">${x.per[p.id]||0}</span></span>`).join("")}
+      <div class="chips">${people.map(p=>{const hrs=x.perH[p.id]||0, cap=TMModel.editingCapacity(p,structOf(m)), over=cap&&hrs>cap;
+        return `<span class="chip" ${over?'style="border-color:var(--low)"':""} title="${esc(TMModel.displayNameOf(p))}: ${x.per[p.id]||0} pieces, ${hrs} hours${cap?" of "+cap:""}">
+          <b>${esc(TMModel.displayNameOf(p))}</b><span class="own" ${over?'style="color:var(--low);font-weight:700"':""}>${x.per[p.id]||0} pc${hrs?` · ${hrs}${cap?"/"+cap:""} hrs`:""}</span></span>`;}).join("")}
       ${Object.keys(x.per).filter(pid=>!people.some(p=>p.id===pid)).map(pid=>{const p=memberById(pid);
-        return p?`<span class="chip" title="From another pod"><b>${esc(TMModel.displayNameOf(p))}</b><span class="own">${x.per[pid]} · floater</span></span>`:"";}).join("")}</div>`:""}
+        return p?`<span class="chip" title="From another pod"><b>${esc(TMModel.displayNameOf(p))}</b><span class="own">${x.per[pid]} pc · ${x.perH[pid]||0} hrs · floater</span></span>`:"";}).join("")}</div>`:""}
   </div>`;
 }
 
@@ -1417,10 +1452,17 @@ view().addEventListener("input",e=>{
     const sb=document.getElementById("saveEntry"); sb.disabled=false; sb.textContent="Save";
   }
   if(t.dataset.q){
-    const m=ui.month,bid=ui.brandSel,d=ui.bdrafts[m+"|"+bid].d;
+    const m=ui.month,bid=ui.brandSel,b=brandById(bid),d=ui.bdrafts[m+"|"+bid].d;
     if(t.value==="")delete d[t.dataset.q]; else d[t.dataset.q]=+t.value;
+    const it=b&&(b.items||[]).find(x=>x.id===t.dataset.q);
+    const lh=document.getElementById("lh-"+t.dataset.q);
+    if(lh&&it)lh.textContent=TMModel.hoursFor(d[it.id],it.hours)||"–";
     const tot=document.getElementById("planTotal");
-    if(tot)tot.textContent=Object.values(d).reduce((a,v)=>a+(+v||0),0)+" this month";
+    if(tot&&b){
+      const pieces=Object.values(d).reduce((a,v)=>a+(+v||0),0);
+      const hrs=Math.round((b.items||[]).reduce((a,i)=>a+TMModel.hoursFor(d[i.id],i.hours),0)*10)/10;
+      tot.textContent=pieces+" pieces"+(hrs?" · "+hrs+" hrs":"");
+    }
     const sb=document.getElementById("savePlan"); if(sb){sb.disabled=false;sb.textContent="Save";}
   }
   if(t.dataset.av){
@@ -1487,6 +1529,9 @@ view().addEventListener("change",async e=>{
     if(b&&v&&v!==b.name){b.name=v;render();await saveConfig();toast("Brand renamed");}return;}
   if(t.dataset.iname){const b=brandById(t.dataset.b);const it=b&&(b.items||[]).find(x=>x.id===t.dataset.iname);const v=t.value.trim();
     if(it&&v&&v!==it.name){it.name=v;render();await saveConfig();toast("Deliverable renamed");}return;}
+  if(t.dataset.ih){const b=brandById(t.dataset.b);const it=b&&(b.items||[]).find(x=>x.id===t.dataset.ih);
+    if(it){it.hours=t.value===""?"":Math.max(0,+t.value||0);render();await saveConfig();
+      toast(it.hours?`${it.name}: ${it.hours} hrs each`:"Hours cleared");}return;}
   if(t.dataset.pname){const p=config.team.find(x=>x.id===t.dataset.pname);const v=t.value.trim();if(p&&v&&v!==p.name){p.name=v;await saveConfig();toast("Name updated");}return;}
   if(t.dataset.plevel){const p=config.team.find(x=>x.id===t.dataset.plevel);if(p){p.level=t.value;
       // carry assignments over to the same job names at the new level
@@ -1510,8 +1555,9 @@ view().addEventListener("submit",async e=>{
     render();await saveConfig();toast(name+" added. Now add its deliverables.");}
   if(e.target.id==="addItem"){const b=brandById(ui.brandSel);if(!b)return;
     const name=document.getElementById("newItem").value.trim(), qty=document.getElementById("newItemQty").value;
+    const hrs=document.getElementById("newItemHrs").value;
     if(!name)return;
-    const it={id:uid("i"),name}; b.items=b.items||[]; b.items.push(it);
+    const it={id:uid("i"),name,hours:hrs===""?"":Math.max(0,+hrs||0)}; b.items=b.items||[]; b.items.push(it);
     const k=ui.month+"|"+b.id, hasQty=qty!==""&&isFinite(+qty);
     if(hasQty&&ui.bdrafts[k])ui.bdrafts[k].d[it.id]=+qty;
     render();await saveConfig();

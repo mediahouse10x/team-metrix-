@@ -26,7 +26,7 @@ Metrics and Deliverables share nothing. Allocation *reads* the team list and the
 
 ## Deliverables
 
-- **Plan** — create brands, add each brand's deliverables (Ads, Story, Carousel, Reels, anything), and set how many of each go out this month. "Copy from last month" fills a repeating retainer in one click.
+- **Plan** — create brands, add each brand's deliverables (Ads, Story, Carousel, Reels, anything), and set how many of each go out this month plus **Hrs each**, how long one piece takes. The quantity is per month; the hours carry over. Each row shows its own hours and the brand header shows `30 pieces · 55 hrs`. "Copy from last month" fills a repeating retainer in one click.
 - **Overview** — total deliverables for the month, a ranked table by brand with each brand's share, totals by deliverable type across all brands, a per-brand breakdown and a bar chart. Exports to CSV.
 
 Quantities are per month, so each month stands on its own and past months stay readable.
@@ -65,6 +65,8 @@ Moving a channel or a person between pods drops anyone who no longer belongs, so
 The Deliverables plan reaches the pods by itself. Open **Structure → Workload** and every channel that has a planned quantity, sits in a pod and has people on it is shared between those people — evenly, whole pieces, remainder to the first. Channels you have already set by hand are left exactly as they are.
 
 Each pod shows what it has to put out this month, channel by channel and deliverable by deliverable, with what each person is carrying. Every number is an input: change one and it sticks, **Re-split** shares that line out evenly again, and a line that no longer adds up says so (`6 not placed`).
+
+**Hours** run all the way through: `Reels · 20 to deliver · 2 hrs each · 40 hrs` per line, the hours for each channel and each pod, and what every person is carrying against their own capacity (`Kamesh 15 pc · 27.5/24 hrs`, red when over). The tiles at the top compare the month's hours with the team's capacity — capacity being each person's **hrs/month** from the Builder, less their owner time — and say whether you are short or have hours spare.
 
 These are the same numbers as Allocation → Split and Team load, not a second copy — change one and the others follow. Channels with a plan but no pod, or no people, are called out at the top.
 

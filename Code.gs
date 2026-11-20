@@ -19,7 +19,7 @@
  *
  * Deliverables (a separate feature — nothing here reads the tabs above):
  *   Brands      id | name
- *   BrandItems  brandId | itemId | name
+ *   BrandItems  brandId | itemId | name | hoursPerPiece
  *   Plan        month | brandId | itemId | quantity
  *
  * Allocation (splits the plan across the team; writes only its own two tabs):
@@ -49,7 +49,7 @@ var HEAD = {
   Entries:    ['month', 'personId', 'jobId', 'goal', 'actual'],
   // Deliverables side (independent of the four above)
   Brands:     ['id', 'name', 'kind', 'platforms', 'formats', 'notes', 'active'],
-  BrandItems: ['brandId', 'itemId', 'name'],
+  BrandItems: ['brandId', 'itemId', 'name', 'hoursPerPiece'],
   Plan:       ['month', 'brandId', 'itemId', 'quantity'],
   // Allocation side (reads nothing from the sheet the other sections own)
   AllocTags:  ['brandId', 'itemId', 'ck', 'kind'],
@@ -202,7 +202,7 @@ function loadAll() {
     var bid = String(r[0]).trim(), iid = String(r[1]).trim();
     if (!bid || !iid) return;
     if (!itemsByBrand[bid]) itemsByBrand[bid] = [];
-    itemsByBrand[bid].push({ id: iid, name: String(r[2]) });
+    itemsByBrand[bid].push({ id: iid, name: String(r[2]), hours: num(r[3]) });
   });
 
   var brands = rowsOf('Brands').map(function (r) {
@@ -323,7 +323,7 @@ function saveConfig(config) {
 
   var items = [];
   brands.forEach(function (b) {
-    (b.items || []).forEach(function (i) { items.push([String(b.id), String(i.id), String(i.name)]); });
+    (b.items || []).forEach(function (i) { items.push([String(b.id), String(i.id), String(i.name), num(i.hours)]); });
   });
   writeRows('BrandItems', items);
 

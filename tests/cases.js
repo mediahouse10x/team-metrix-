@@ -159,6 +159,21 @@
       eq(M.splitEvenly(2, ["a", "b", "c"]), { a: 1, b: 1 }, "two pieces over three people");
     });
 
+    // ---- hours ----
+    check("hoursFor multiplies pieces by the time each takes", function () {
+      eq(M.hoursFor(20, 2), 40, "20 reels at 2 hours");
+      eq(M.hoursFor(11, 1.5), 16.5, "11 posts at an hour and a half");
+    });
+    check("hoursFor keeps one decimal", function () {
+      eq(M.hoursFor(7, 0.25), 1.8, "7 at a quarter hour");
+    });
+    check("hoursFor is zero when either side is missing", function () {
+      eq(M.hoursFor(20, 0), 0, "no time set");
+      eq(M.hoursFor(0, 2), 0, "nothing planned");
+      eq(M.hoursFor("", ""), 0, "both blank");
+      eq(M.hoursFor(-5, 2), 0, "negative quantity");
+    });
+
     // ---- capacity ----
     check("editingCapacity takes owner time off the top", function () {
       eq(M.editingCapacity(team[0], struct()), 60, "Basha at 40% owner time");

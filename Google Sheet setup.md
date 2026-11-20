@@ -35,7 +35,7 @@ Script-ஏ tab-களை உருவாக்கிக்கும்.
 | Tab | Columns |
 |---|---|
 | `Brands` | id, name |
-| `BrandItems` | brandId, itemId, name |
+| `BrandItems` | brandId, itemId, name, hoursPerPiece |
 | `Plan` | month, brandId, itemId, quantity |
 
 **Allocation பகுதி** (Plan-ஐ team-க்கு பிரிச்சு கொடுக்கறது):

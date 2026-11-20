@@ -129,6 +129,13 @@
     return out;
   }
 
+  /** Hours of work in a quantity of one deliverable, to one decimal. */
+  function hoursFor(qty, perPiece) {
+    var q = +qty || 0, h = +perPiece || 0;
+    if (q <= 0 || h <= 0) return 0;
+    return Math.round(q * h * 10) / 10;
+  }
+
   function rolesOf(struct, personId) {
     var r = struct.roles[personId];
     return Array.isArray(r) ? r : [];
@@ -227,7 +234,7 @@
       var capacity = members.reduce(function (t, p) { return t + editingCapacity(p, struct); }, 0);
       var load = members.reduce(function (t, p) { return t + (+loadFor(p.id) || 0); }, 0);
       if (capacity > 0 && load > capacity)
-        warnings.push({ code: "over-capacity", ref: pod.id, msg: pod.name + " is over capacity: " + load + " planned against " + capacity + " editing capacity." });
+        warnings.push({ code: "over-capacity", ref: pod.id, msg: pod.name + " needs " + load + " hours against " + capacity + " hours of capacity." });
     });
 
     Object.keys(struct.bpod).forEach(function (bid) {
@@ -262,6 +269,7 @@
     getBrandTeam: getBrandTeam,
     peopleOnBrand: peopleOnBrand,
     splitEvenly: splitEvenly,
+    hoursFor: hoursFor,
     brandsWorkedOn: brandsWorkedOn,
     brandsOfPod: brandsOfPod,
     sortedPods: sortedPods,
